@@ -1,0 +1,27 @@
+<div class="main-container">
+    <div class="tab-container">
+        @for (tabInfo of $tabInfos(); track tabInfo){
+        <div class="tab" [class.active]="tabInfo.fileId == activeFileId" (click)="tabClicked(tabInfo.fileId)"
+            (contextmenu)="onRightClick($event, tabInfo.fileId)">
+            {{tabInfo.filename}}
+            <div class="icon-container" (click)="close(tabInfo.fileId)">
+                <div class="icon">
+                    &times;
+                </div>
+            </div>
+        </div>
+        }
+    </div>
+    <div class="add-container">
+        <div class="icon-container lg" (click)="newTab()">
+            <div class="icon">&plus;</div>
+        </div>
+    </div>
+</div>
+<div class="context-menu" #contextMenu>
+    <div class="menu-item" (click)="close(contextMenuFileId!)">Close</div>
+    <div class="menu-item" (click)="rename()">Rename</div>
+    <div class="menu-item">Move to Left</div>
+    <div class="menu-item">Duplicate</div>
+    <div class="menu-item">Download</div>
+</div>

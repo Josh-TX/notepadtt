@@ -14,7 +14,7 @@ public class StorageManager
             return new TabContent
             {
                 FileId = fileId,
-                Text = ""
+                Text = "\n\n\n\n"
             };
         }
         var fullPath = _fileBasePath + tabInfo.Filename;
@@ -23,7 +23,7 @@ public class StorageManager
             return new TabContent
             {
                 FileId = fileId,
-                Text = ""
+                Text = "\n\n\n\n"
             };
         }
         var text = System.IO.File.ReadAllText(fullPath);
