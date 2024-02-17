@@ -46,7 +46,7 @@ export class SignalRService {
             })
         });
         this.connection.onclose(() => {
-            this.connection
+            document.body.setAttribute("style", "--primary: #d22d2d")
         })
         this.connection.on("tabContent", (tabContent: TabContent) => {
             if (this.$tabContent && tabContent.fileId == this.fileId){
@@ -78,8 +78,11 @@ export class SignalRService {
         this.fileId = fileId;
     }
 
-    tabContentChanged(tabContent: TabContent){
+    tabContentChanged(tabContent: TabContent, updateSignal: boolean = false){
         this.connection.invoke("TabContentChanged", tabContent);
+        if (updateSignal){
+            this.$tabContent.set(tabContent);
+        }
     }
 }
 

@@ -4,7 +4,7 @@
         <div class="tab" [class.active]="tabInfo.fileId == activeFileId" (click)="tabClicked(tabInfo.fileId)"
             (contextmenu)="onRightClick($event, tabInfo.fileId)">
             {{tabInfo.filename}}
-            <div class="icon-container" (click)="close(tabInfo.fileId)">
+            <div class="icon-container close-container" (click)="close(tabInfo.fileId)">
                 <div class="icon">
                     &times;
                 </div>
@@ -25,3 +25,14 @@
     <div class="menu-item">Duplicate</div>
     <div class="menu-item">Download</div>
 </div>
+
+@if (closedTabInfo){
+    <div class="toast-container" [@inOutAnimation]>
+        <div class="toast">
+            <div style="padding: 8px 0">Closed {{closedTabInfo.filename}}</div>
+            <div class="toast-undo" (click)="undo()">
+                UNDO
+            </div>
+        </div>
+    </div>
+}

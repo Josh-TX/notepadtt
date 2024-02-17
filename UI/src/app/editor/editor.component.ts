@@ -8,7 +8,7 @@ import { markdown } from '@codemirror/lang-markdown';
 import { DOCUMENT } from '@angular/common';
 import {
     oneDark
-} from './theme';
+} from './dark-theme';
 import {
     oneLight
 } from './light-theme';
@@ -43,6 +43,7 @@ export class EditorComponent {
                     if (oldText == newText){
                         return;
                     }
+                    //We only want to replace what changed, since that's less disruptive of the cursor position
                     var startMatch = getMatchLength(oldText, newText);
                     var endMatch = getMatchLength(reverseString(oldText), reverseString(newText));
                     this.dispatching = true;
