@@ -4,7 +4,11 @@ using System.Text.RegularExpressions;
 
 public class StorageManager
 {
+#if !DEBUG
     private const string _fileBasePath = "/data/";
+#else
+    private const string _fileBasePath = "data/";
+#endif
     private const string _fileOrderName = ".notepad_file_order.txt";
     private static Info? _info;
 
@@ -38,7 +42,8 @@ public class StorageManager
 
     public void SaveTabContent(TabContent tabContent)
     {
-        var info = GetInfo();
+        //since this is called a bunch, I don't want to call GetInfo() since that always scans the 
+        var info = _info != null ? _info : GetInfo();
         var tabInfo = info.TabInfos.FirstOrDefault(z => z.FileId == tabContent.FileId);
         if (tabInfo == null)
         {
@@ -55,11 +60,22 @@ public class StorageManager
 
     public Info GetInfo()
     {
+        var existingFilenames = Directory.GetFiles(_fileBasePath).Select(z => Path.GetFileName(z)).Where(z => z != _fileOrderName);
         if (_info != null)
         {
+            //we've already generated the FileIds, so now we're just detecting changes to the underlying filesystem
+            var untrackedFilenames = existingFilenames.Except(_info.TabInfos.Select(z => z.Filename));
+            foreach (var untrackedFilename in untrackedFilenames)
+            {
+                _info.TabInfos.Add(new TabInfo { FileId = Guid.NewGuid(), Filename = untrackedFilename, IsProtected = true });
+            }
+            var deletedTabInfos = _info.TabInfos.Where(tabInfo => !existingFilenames.Contains(tabInfo.Filename)).ToList();
+            foreach (var deletedTabInfo in deletedTabInfos)
+            {
+                _info.TabInfos.Remove(deletedTabInfo);
+            }
             return _info;
         }
-        var filenames = Directory.GetFiles(_fileBasePath).Select(z => Path.GetFileName(z)).Where(z => z != _fileOrderName);
         var tabInfos = new List<TabInfo>();
         Guid? activeFileId = null;
         if (System.IO.File.Exists(_fileBasePath + _fileOrderName))
@@ -67,31 +83,41 @@ public class StorageManager
             var fileOrders = File.ReadAllLines(_fileBasePath + _fileOrderName);
             foreach (var filename in fileOrders)
             {
-                //The active file will have a ! before the filename
-                var isActive = filename.StartsWith('!');
-                var fixedFilename = isActive ? filename.Substring(1) : filename;
-                //if they created a new tab but never wrote any text, the file won't be created, but we should still perist the tab across server restarts
-                if (filenames.Any(z => z == fixedFilename) || Regex.IsMatch(fixedFilename, @"^new \d+$"))
+                var fixedFilename = filename;
+                var args = new List<string>();
+                while (filename.StartsWith("\\") && fixedFilename.Length > 1)
                 {
-                    var tabInfo = new TabInfo { FileId = Guid.NewGuid(), Filename = fixedFilename };
+                    args.Add(fixedFilename.Substring(1, 1));
+                    fixedFilename = fixedFilename.Substring(2);
+                }
+                var isActive = args.Contains("A");
+                var isProtected = args.Contains("P");
+                //if they created a new tab but never wrote any text, the file won't be created, but we should still perist the tab across server restarts
+                if (existingFilenames.Any(z => z == fixedFilename) || Regex.IsMatch(fixedFilename, @"^new \d+$"))
+                {
+                    var tabInfo = new TabInfo { 
+                        FileId = Guid.NewGuid(),
+                        Filename = fixedFilename,
+                        IsProtected = isProtected,
+                    };
                     tabInfos.Add(tabInfo);
                     activeFileId ??= tabInfo.FileId;
                 }
             }
         }
-        if (filenames.Count() != tabInfos.Count()) {
+        if (existingFilenames.Count() != tabInfos.Count()) {
             //there's either no fileorder file, or the fileorder data is incomplete (new files were added outside the app)
-            foreach(var filename in filenames)
+            foreach(var existingFilename in existingFilenames)
             {
-                if (!tabInfos.Any(z => z.Filename == filename))
+                if (!tabInfos.Any(z => z.Filename == existingFilename))
                 {
-                    tabInfos.Add(new TabInfo { FileId = Guid.NewGuid(), Filename = filename });
+                    tabInfos.Add(new TabInfo { FileId = Guid.NewGuid(), Filename = existingFilename, IsProtected = true });
                 }
             }
         }
         if (!tabInfos.Any())
         {
-            tabInfos.Add(new TabInfo { FileId = Guid.NewGuid(), Filename = "new 1" });
+            tabInfos.Add(new TabInfo { FileId = Guid.NewGuid(), Filename = "new 1", IsProtected = false });
         }
         if (!activeFileId.HasValue)
         {
@@ -103,11 +129,7 @@ public class StorageManager
             TabInfos = tabInfos
         };
         _info = info;
-        return new Info
-        {
-            ActiveFileId = activeFileId.Value,
-            TabInfos = tabInfos
-        };
+        return _info;
     }
 
     public void SaveInfo(Info newInfo)
@@ -134,6 +156,13 @@ public class StorageManager
                     System.IO.File.Move(oldPath, newPath);
                 }
             }
+            var fullPath = _fileBasePath + newTab.Filename;
+            if (Regex.IsMatch(newTab.Filename, @"^new \d+$") && !File.Exists(fullPath))
+            {
+                System.IO.FileInfo fileInfo = new System.IO.FileInfo(fullPath);
+                fileInfo.Directory!.Create();
+                System.IO.File.WriteAllText(fileInfo.FullName, "\n\n\n\n");
+            }
         }
         _info = newInfo;
         SaveFileOrderToDisk(newInfo);
@@ -145,9 +174,13 @@ public class StorageManager
         foreach(var tabInfo in info.TabInfos)
         {
             var line = tabInfo.Filename;
+            if (tabInfo.IsProtected)
+            {
+                line = "\\P" + line;
+            }
             if (tabInfo.FileId == info.ActiveFileId)
             {
-                line = "!" + line;
+                line = "\\A" + line;
             }
             lines.Add(line);
         }

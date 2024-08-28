@@ -41,10 +41,10 @@ export class TabsetComponent {
     activeFileId: string | null;
     activeIndex: number;
     contextMenuFileId: string | undefined;
-    closedTabInfo: TabInfo | undefined;
-    closedTabIndex: number | undefined;
-    closedTabContent: TabContent | undefined;
-    closedTabTimeout: any;
+    deletedTabInfo: TabInfo | undefined;
+    deletedTabIndex: number | undefined;
+    deletedTabContent: TabContent | undefined;
+    deletedTabTimeout: any;
     $tabInfos: Signal<TabInfo[]>
     constructor(
         private signalRService: SignalRService
@@ -102,17 +102,22 @@ export class TabsetComponent {
         menu.classList.remove("active");
     }
 
-    close(fileId: string){
+    delete(fileId: string){
         var tabInfos = this.$tabInfos();
-        var closedTabInfo = tabInfos.find(z => z.fileId == fileId);
-        this.closedTabIndex = tabInfos.findIndex(z => z.fileId == fileId);
+        var deletedTabInfo = tabInfos.find(z => z.fileId == fileId);
+        if (deletedTabInfo!.isProtected){
+            if (!confirm(`${deletedTabInfo!.filename} is protected. Delete anyways?`)){
+                return;
+            }
+        }
+        this.deletedTabIndex = tabInfos.findIndex(z => z.fileId == fileId);
         fetch("/api/tabs/" + fileId).then(response => response.json()).then((tabContent: TabContent) => {
-            this.closedTabInfo = closedTabInfo;
-            this.closedTabContent = tabContent;
-            clearTimeout(this.closedTabTimeout);
-            this.closedTabTimeout = setTimeout(() => {
-                this.closedTabInfo = undefined;
-                this.closedTabContent = undefined;
+            this.deletedTabInfo = deletedTabInfo;
+            this.deletedTabContent = tabContent;
+            clearTimeout(this.deletedTabTimeout);
+            this.deletedTabTimeout = setTimeout(() => {
+                this.deletedTabInfo = undefined;
+                this.deletedTabContent = undefined;
             }, 3500);
             tabInfos = tabInfos.filter(z => z.fileId != fileId);
             this.activeIndex = Math.min(this.activeIndex, tabInfos.length - 1);
@@ -129,14 +134,14 @@ export class TabsetComponent {
 
     undo(){
         var tabInfos = this.$tabInfos();
-        if (tabInfos.some(z => z.filename == this.closedTabInfo!.filename)){
+        if (tabInfos.some(z => z.filename == this.deletedTabInfo!.filename)){
             var altFileName = "new " + this.getNextNewNum();
-            alert(`a file named "${this.closedTabInfo!.filename}" already exists. Recovered file will instead be called "${altFileName}"`);
-            this.closedTabInfo!.filename = altFileName
+            alert(`a file named "${this.deletedTabInfo!.filename}" already exists. Recovered file will instead be called "${altFileName}"`);
+            this.deletedTabInfo!.filename = altFileName
             return;
         }
-        var index = Math.min(tabInfos.length, this.closedTabIndex!);
-        tabInfos.splice(index, 0, this.closedTabInfo!);
+        var index = Math.min(tabInfos.length, this.deletedTabIndex!);
+        tabInfos.splice(index, 0, this.deletedTabInfo!);
         this.activeIndex = index;
         this.activeFileId = tabInfos[this.activeIndex].fileId;
         this.signalRService.subscribeTabContent(this.activeFileId);
@@ -144,16 +149,16 @@ export class TabsetComponent {
             activeFileId: this.activeFileId,
             tabInfos: tabInfos
         });
-        var recoveredTabContent = this.closedTabContent!;
+        var recoveredTabContent = this.deletedTabContent!;
         //we need to give the setInfo time to save on the server
         //otherwise tabContent change won't work because the fileId isn't found
         //I know... this isn't the best way to handle race conditions
         setTimeout(() => {
             this.signalRService.tabContentChanged(recoveredTabContent, true);
         }, 100);
-        clearTimeout(this.closedTabTimeout);
-        this.closedTabInfo = undefined;
-        this.closedTabContent = undefined;
+        clearTimeout(this.deletedTabTimeout);
+        this.deletedTabInfo = undefined;
+        this.deletedTabContent = undefined;
     }
 
     rename(){
@@ -161,8 +166,6 @@ export class TabsetComponent {
         var tabInfo = tabInfos.find(z => z.fileId == this.contextMenuFileId)!;
         var newName = prompt("enter a name", tabInfo.filename);
         if (newName){
-            var tabInfos = this.$tabInfos();
-            var tabInfo = tabInfos.find(z => z.fileId == this.contextMenuFileId)!;
             if (tabInfos.some(z => z != tabInfo && z.filename == newName)){
                 alert(`a file named "${newName}" already exists`);
                 return;
@@ -174,6 +177,22 @@ export class TabsetComponent {
             });
         }
     }
+
+    isProtected(fileId: string): boolean{
+        console.log(fileId);
+        return this.$tabInfos().find(z => z.fileId == fileId)!.isProtected;
+    }
+
+    toggleProtection(){
+        var tabInfos = this.$tabInfos();
+        var tabInfo = tabInfos.find(z => z.fileId == this.contextMenuFileId)!;
+        tabInfo.isProtected = !tabInfo.isProtected;
+        this.signalRService.setInfo({
+            activeFileId: this.activeFileId,
+            tabInfos: tabInfos
+        });
+    }
+
 
     moveToLeft(){
         var tabInfos = this.$tabInfos();
@@ -195,6 +214,7 @@ export class TabsetComponent {
             var newTabInfo = {
                 filename: this.getDuplicateFilename(originalTabInfo.filename),
                 fileId: newFileId,
+                isProtected: originalTabInfo.isProtected
             }
             var newTabIndex = Math.min(tabInfos.length, originalTabIndex + 1);
             tabInfos.splice(newTabIndex, 0, newTabInfo);
@@ -234,17 +254,18 @@ export class TabsetComponent {
 
     newTab(){
         var index = this.getNextNewNum();
-        var fileId = this.randomGuid();
+        var newFileId = this.randomGuid();
         var tabInfos = this.$tabInfos();
         tabInfos.push({
             filename: "new " + index,
-            fileId: fileId,
+            fileId: newFileId,
+            isProtected: false
         });
-        this.activeFileId = fileId;
+        this.activeFileId = newFileId;
         this.signalRService.subscribeTabContent(this.activeFileId);
         this.activeIndex = tabInfos.length - 1;
         this.signalRService.setInfo({
-            activeFileId: fileId,
+            activeFileId: newFileId,
             tabInfos: tabInfos
         });
     }

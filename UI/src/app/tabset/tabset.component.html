@@ -4,7 +4,7 @@
         <div class="tab" [class.active]="tabInfo.fileId == activeFileId" (click)="tabClicked(tabInfo.fileId)"
             (contextmenu)="onRightClick($event, tabInfo.fileId)">
             {{tabInfo.filename}}
-            <div class="icon-container close-container" (click)="close(tabInfo.fileId)">
+            <div *ngIf="!tabInfo.isProtected" class="icon-container close-container" (click)="delete(tabInfo.fileId)">
                 <div class="icon">
                     &times;
                 </div>
@@ -19,17 +19,18 @@
     </div>
 </div>
 <div class="context-menu" #contextMenu>
-    <div class="menu-item" (click)="close(contextMenuFileId!)">Close</div>
+    <div class="menu-item" (click)="delete(contextMenuFileId!)">Delete</div>
     <div class="menu-item" (click)="rename()">Rename</div>
+    <div *ngIf="contextMenuFileId" class="menu-item" (click)="toggleProtection()">{{ isProtected(contextMenuFileId!) ? 'Remove Protection' : 'Protect'}}</div>
     <div class="menu-item" (click)="moveToLeft()">Move to Left</div>
     <div class="menu-item" (click)="duplicate()">Duplicate</div>
     <div class="menu-item" (click)="download()">Download</div>
 </div>
 
-@if (closedTabInfo){
+@if (deletedTabInfo){
     <div class="toast-container" [@inOutAnimation]>
         <div class="toast">
-            <div style="padding: 8px 0">Closed {{closedTabInfo.filename}}</div>
+            <div style="padding: 8px 0">Deleted {{deletedTabInfo.filename}}</div>
             <div class="toast-undo" (click)="undo()">
                 UNDO
             </div>

@@ -4,7 +4,7 @@ public class Info
     /// <summary>
     /// The order determines the order they appear in the app
     /// </summary>
-    public required IEnumerable<TabInfo> TabInfos { get; set; }
+    public required List<TabInfo> TabInfos { get; set; }
 }
 
 
@@ -21,7 +21,14 @@ public class TabInfo
     /// a temporary identifier that the clients should use to identify files (particularly important when a file is renamed)
     /// </summary>
     public required Guid FileId { get; set; }
+
+    /// <summary>
+    /// When this is true, the file can't be deleted through the app until it's unprotected
+    /// </summary>
+    public required bool IsProtected { get; set; }
 }
+
+
 public class TabContent
 {
     public required Guid FileId { get; set; }

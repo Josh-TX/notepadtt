@@ -5,7 +5,8 @@ import * as signalR from '@microsoft/signalr';
 
 export type TabInfo = {
     filename: string,
-    fileId: string
+    fileId: string,
+    isProtected: boolean
 }
 
 export type TabContent = {
