@@ -5,10 +5,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
-    <Folder Include="Controllers\"/>
-    <Folder Include="Models\"/>
-  </ItemGroup>
-  <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="8.0.1"/>
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="8.0.1" />
   </ItemGroup>
 </Project>

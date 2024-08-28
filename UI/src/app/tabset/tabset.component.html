@@ -21,9 +21,9 @@
 <div class="context-menu" #contextMenu>
     <div class="menu-item" (click)="close(contextMenuFileId!)">Close</div>
     <div class="menu-item" (click)="rename()">Rename</div>
-    <div class="menu-item">Move to Left</div>
-    <div class="menu-item">Duplicate</div>
-    <div class="menu-item">Download</div>
+    <div class="menu-item" (click)="moveToLeft()">Move to Left</div>
+    <div class="menu-item" (click)="duplicate()">Duplicate</div>
+    <div class="menu-item" (click)="download()">Download</div>
 </div>
 
 @if (closedTabInfo){

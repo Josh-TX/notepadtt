@@ -1,3 +1,3 @@
-# My Notepad
+# Notepad
 
-A web-app similar to notepad++. Recommended usage is via this Docker Image: https://hub.docker.com/r/joshua2allen/my-notepad
+A simple notepad app similar to notepad++. Notes are auto-saved and synchronized in real time (powered by Microsoft's SignalR).

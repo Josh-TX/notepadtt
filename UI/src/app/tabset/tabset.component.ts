@@ -9,7 +9,7 @@ import { animate, style, transition, trigger } from '@angular/animations';
 @Component({
   selector: 'tabset',
   standalone: true,
-  imports: [CommonModule, RouterOutlet, BrowserAnimationsModule],
+  imports: [CommonModule, RouterOutlet],
   templateUrl: './tabset.component.html',
   styleUrls: ['./tabset.component.scss'],
   animations: [
@@ -130,7 +130,9 @@ export class TabsetComponent {
     undo(){
         var tabInfos = this.$tabInfos();
         if (tabInfos.some(z => z.filename == this.closedTabInfo!.filename)){
-            alert(`a file named "${this.closedTabInfo!.filename}" already exists`);
+            var altFileName = "new " + this.getNextNewNum();
+            alert(`a file named "${this.closedTabInfo!.filename}" already exists. Recovered file will instead be called "${altFileName}"`);
+            this.closedTabInfo!.filename = altFileName
             return;
         }
         var index = Math.min(tabInfos.length, this.closedTabIndex!);
@@ -155,7 +157,9 @@ export class TabsetComponent {
     }
 
     rename(){
-        var newName = prompt("enter a name");
+        var tabInfos = this.$tabInfos();
+        var tabInfo = tabInfos.find(z => z.fileId == this.contextMenuFileId)!;
+        var newName = prompt("enter a name", tabInfo.filename);
         if (newName){
             var tabInfos = this.$tabInfos();
             var tabInfo = tabInfos.find(z => z.fileId == this.contextMenuFileId)!;
@@ -171,26 +175,107 @@ export class TabsetComponent {
         }
     }
 
-    newTab(){
+    moveToLeft(){
         var tabInfos = this.$tabInfos();
-        for (var i = 1; i < 1000; i++){
-            if (!tabInfos.some(z => z.filename == "new " + i)){
-                var fileId = this.randomGuid();
-                tabInfos.push({
-                    filename: "new " + i,
-                    fileId: fileId,
-                });
-                this.activeFileId = fileId;
-                this.signalRService.subscribeTabContent(this.activeFileId);
-                this.activeIndex = tabInfos.length - 1;
-                this.signalRService.setInfo({
-                    activeFileId: fileId,
-                    tabInfos: tabInfos
-                });
-                return;
+        var tabInfo = tabInfos.find(z => z.fileId == this.contextMenuFileId)!;
+        tabInfos = [tabInfo, ...tabInfos.filter(z => z != tabInfo)];
+        this.signalRService.setInfo({
+            activeFileId: this.activeFileId,
+            tabInfos: tabInfos
+        });
+    }
+
+    duplicate(){
+        var originalFileId = this.contextMenuFileId!
+        var newFileId = this.randomGuid();
+        var tabInfos = this.$tabInfos();
+        var originalTabInfo = tabInfos.find(z => z.fileId == originalFileId)!;
+        var originalTabIndex = tabInfos.findIndex(z => z.fileId == originalFileId);
+        fetch("/api/tabs/" + originalFileId).then(response => response.json()).then((originalTabContent: TabContent) => {
+            var newTabInfo = {
+                filename: this.getDuplicateFilename(originalTabInfo.filename),
+                fileId: newFileId,
+            }
+            var newTabIndex = Math.min(tabInfos.length, originalTabIndex + 1);
+            tabInfos.splice(newTabIndex, 0, newTabInfo);
+            this.activeIndex = newTabIndex;
+            this.activeFileId = tabInfos[this.activeIndex].fileId;
+            this.signalRService.subscribeTabContent(this.activeFileId);
+            this.signalRService.setInfo({
+                activeFileId: this.activeFileId,
+                tabInfos: tabInfos
+            });
+            var newTabContent: TabContent = {
+                fileId: newFileId,
+                text: originalTabContent.text
+            }
+            //we need to give the setInfo time to save on the server
+            //otherwise tabContent change won't work because the fileId isn't found
+            //I know... this isn't the best way to handle race conditions
+            setTimeout(() => {
+                this.signalRService.tabContentChanged(newTabContent, true);
+            }, 100);
+        })
+    }
+
+    download(){
+        var filename = this.$tabInfos().find(z => z.fileId == this.contextMenuFileId)!.filename;
+        fetch("/api/tabs/" +  this.contextMenuFileId).then(response => response.json()).then((tabContent: TabContent) => {
+            const blob = new Blob([tabContent.text], { type: 'text/plain' });
+            const link = document.createElement('a');
+            link.download = filename;
+            link.href = window.URL.createObjectURL(blob);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            window.URL.revokeObjectURL(link.href);
+        })
+    }
+
+    newTab(){
+        var index = this.getNextNewNum();
+        var fileId = this.randomGuid();
+        var tabInfos = this.$tabInfos();
+        tabInfos.push({
+            filename: "new " + index,
+            fileId: fileId,
+        });
+        this.activeFileId = fileId;
+        this.signalRService.subscribeTabContent(this.activeFileId);
+        this.activeIndex = tabInfos.length - 1;
+        this.signalRService.setInfo({
+            activeFileId: fileId,
+            tabInfos: tabInfos
+        });
+    }
+
+    private getDuplicateFilename(name: string): string {
+        var tabInfos = this.$tabInfos();
+        var anyDuplicateNames = tabInfos.some(z => z.filename == name);
+        if (!anyDuplicateNames){
+            return name; //shouldn't happen
+        }
+        var matches = name.match(/^(.*?)(?: *\(\d+\))$/)
+        var baseName = matches ? matches[1] : name;
+        for (var i = 2; i < 10000; i++){
+            var candidate = `${baseName} (${i})`;
+            if (!tabInfos.some(z => z.filename == candidate)){
+                return candidate;
             }
         }
         alert("you have too many files");
+        throw "exceeded file limit";
+    }
+
+    private getNextNewNum(): number {
+        var tabInfos = this.$tabInfos();
+        for (var i = 1; i < 10000; i++){
+            if (!tabInfos.some(z => z.filename == "new " + i)){
+                return i;
+            }
+        }
+        alert("you have too many files");
+        throw "exceeded file limit";
     }
 
     private randomGuid(): string {
@@ -199,19 +284,4 @@ export class TabsetComponent {
             (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
         );
     }
-}
-
-
-function computedUntilNotNull(func: () => any){
-    var val: any = null;
-    computed(() => {
-        if (val != null){
-            return val;
-        }
-        var res = func();
-        if (res != null){
-            val = res;
-        }
-        return res;
-    })
 }

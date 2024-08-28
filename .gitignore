@@ -2,5 +2,6 @@
 /Server/bin
 /Server/wwwroot
 /Server/data
-
+/Server/.vs
 /UI/node_modules
+Server/Properties/launchSettings.json
