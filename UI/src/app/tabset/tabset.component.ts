@@ -184,6 +184,7 @@ export class TabsetComponent {
                 activeFileId: this.activeFileId,
                 tabInfos: tabInfos
             });
+            break;
         }
     }
 
