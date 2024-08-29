@@ -4,3 +4,5 @@ Server/.vscode
 Server/bin
 Server/data
 Server/obj
+Server/*.sln
+Server/Dockerfile

@@ -1,3 +1,4 @@
+# this dockerfile is slow because it builds the UI. If you've already built the UI, the dockerfile in the Server directory is faster
 # Stage 1 - Build Angular
 FROM node:18 AS angular-build
 
@@ -23,8 +24,7 @@ FROM mcr.microsoft.com/dotnet/aspnet:8.0
 
 WORKDIR /app
 COPY --from=dotnet-build /app .
-RUN mkdir /app/data && chown $APP_UID /app/data
-RUN mkdir /app/data/files && chown $APP_UID /app/data/files
+RUN mkdir /data && chown $APP_UID /data
 VOLUME /app/data
 USER $APP_UID
 

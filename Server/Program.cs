@@ -8,7 +8,9 @@ app.UseDefaultFiles();
 app.UseStaticFiles();
 app.MapControllers();
 app.MapHub<SignalRHub>("main-hub");
+#if DEBUG
 app.UseDeveloperExceptionPage();
+#endif
 
 var title = Environment.GetEnvironmentVariable("title");
 if (title != null)
