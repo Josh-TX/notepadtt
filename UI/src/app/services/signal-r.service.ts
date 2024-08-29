@@ -44,7 +44,7 @@ export class SignalRService {
         var signalR = (<any>window).signalR
         this.connection = new signalR.HubConnectionBuilder()
             .withUrl('main-hub')
-            .configureLogging(signalR.LogLevel.Debug)
+            //.configureLogging(signalR.LogLevel.Debug)
             .withAutomaticReconnect()
             .build();
         this.connection.on("info", (info: Info) => {

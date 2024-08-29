@@ -100,6 +100,7 @@ export class TabsetComponent {
         document.removeEventListener("click", this.removeContextMenu);
         var menu: HTMLElement = this.contextMenu!.nativeElement;
         menu.classList.remove("active");
+        this.contextMenuFileId = undefined;
     }
 
     delete(fileId: string){
@@ -111,6 +112,7 @@ export class TabsetComponent {
             }
         }
         this.deletedTabIndex = tabInfos.findIndex(z => z.fileId == fileId);
+        this.contextMenuFileId = undefined;
         fetch("/api/tabs/" + fileId).then(response => response.json()).then((tabContent: TabContent) => {
             this.deletedTabInfo = deletedTabInfo;
             this.deletedTabContent = tabContent;
@@ -164,11 +166,18 @@ export class TabsetComponent {
     rename(){
         var tabInfos = this.$tabInfos();
         var tabInfo = tabInfos.find(z => z.fileId == this.contextMenuFileId)!;
-        var newName = prompt("enter a name", tabInfo.filename);
-        if (newName){
-            if (tabInfos.some(z => z != tabInfo && z.filename == newName)){
+        while (true){
+            var newName = prompt("enter a new name", tabInfo.filename);
+            if (!newName){
+                break;
+            }
+            if (/[\/\0]/.test(newName)){
+                alert(`the provided name contains invalid characters`);
+                continue;
+            }
+            if (tabInfos.some(z => z != tabInfo && z.filename == newName) || newName == ".notepadtt_tab_data.txt"){
                 alert(`a file named "${newName}" already exists`);
-                return;
+                continue;
             }
             tabInfo.filename = newName;
             this.signalRService.setInfo({
@@ -179,7 +188,6 @@ export class TabsetComponent {
     }
 
     isProtected(fileId: string): boolean{
-        console.log(fileId);
         return this.$tabInfos().find(z => z.fileId == fileId)!.isProtected;
     }
 

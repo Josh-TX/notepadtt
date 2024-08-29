@@ -53,12 +53,20 @@
         border-left-width: 1px;
     }
 
+    &.right-clicked {
+        border-top: 2px solid var(--text-muted);
+        padding-top: 7px;
+    }
+    
     &.active {
         padding-top: 7px;
         color: var(--text-contrast);
         background: var(--bg-main);
         border-bottom: 1x solid var(--bg-main);
-        border-top: 2px solid var(--primary)
+        border-top: 2px solid var(--primary);
+        &.right-clicked {
+            border-top: 2px solid var(--text-contrast)
+        }
     }
 }
 

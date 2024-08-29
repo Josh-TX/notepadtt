@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text.Json;
 using System.Text.RegularExpressions;
 
 public class StorageManager
@@ -10,7 +8,7 @@ public class StorageManager
 #else
     private const string _fileBasePath = "/data/";
 #endif
-    private const string _fileOrderName = ".notepad_file_order.txt";
+    private const string _tabDataFilename = ".notepadtt_tab_data.txt";
     private static Info? _info;
 
     public TabContent LoadTabContent(Guid fileId)
@@ -63,7 +61,7 @@ public class StorageManager
     {
 
         var existingFilenames =  Directory.Exists(_fileBasePath) 
-            ? Directory.GetFiles(_fileBasePath).Select(z => Path.GetFileName(z)).Where(z => z != _fileOrderName)
+            ? Directory.GetFiles(_fileBasePath).Select(z => Path.GetFileName(z)).Where(z => z != _tabDataFilename)
             : Enumerable.Empty<string>();
         if (_info != null)
         {
@@ -82,14 +80,14 @@ public class StorageManager
         }
         var tabInfos = new List<TabInfo>();
         Guid? activeFileId = null;
-        if (System.IO.File.Exists(_fileBasePath + _fileOrderName))
+        if (System.IO.File.Exists(_fileBasePath + _tabDataFilename))
         {
-            var fileOrders = File.ReadAllLines(_fileBasePath + _fileOrderName);
-            foreach (var filename in fileOrders)
+            var tabDataLines = File.ReadAllLines(_fileBasePath + _tabDataFilename);
+            foreach (var tabDataLine in tabDataLines)
             {
-                var fixedFilename = filename;
+                var fixedFilename = tabDataLine;
                 var args = new List<string>();
-                while (filename.StartsWith("\\") && fixedFilename.Length > 1)
+                while (tabDataLine.StartsWith("\\") && fixedFilename.Length > 1)
                 {
                     args.Add(fixedFilename.Substring(1, 1));
                     fixedFilename = fixedFilename.Substring(2);
@@ -150,6 +148,10 @@ public class StorageManager
         }
         foreach (var newTab in newInfo.TabInfos)
         {
+            if (newTab.Filename == _tabDataFilename)
+            {
+                throw new Exception("invalid filename");
+            }
             var existingTab = existingInfo.TabInfos.FirstOrDefault(z => z.FileId == newTab.FileId);
             if (existingTab != null && existingTab.Filename != newTab.Filename) //check if file was renamed
             {
@@ -188,7 +190,7 @@ public class StorageManager
             }
             lines.Add(line);
         }
-        System.IO.FileInfo fileInfo = new System.IO.FileInfo(_fileBasePath + _fileOrderName);
+        System.IO.FileInfo fileInfo = new System.IO.FileInfo(_fileBasePath + _tabDataFilename);
         fileInfo.Directory!.Create();
         System.IO.File.WriteAllLines(fileInfo.FullName, lines);
     }
