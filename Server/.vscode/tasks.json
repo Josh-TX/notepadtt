@@ -7,7 +7,7 @@
             "type": "process",
             "args": [
                 "build",
-                "${workspaceFolder}/MyNotepad.csproj",
+                "${workspaceFolder}/Notepadtt.csproj",
                 "/property:GenerateFullPaths=true",
                 "/consoleloggerparameters:NoSummary;ForceNoAlign"
             ],
@@ -19,7 +19,7 @@
             "type": "process",
             "args": [
                 "publish",
-                "${workspaceFolder}/MyNotepad.csproj",
+                "${workspaceFolder}/Notepadtt.csproj",
                 "/property:GenerateFullPaths=true",
                 "/consoleloggerparameters:NoSummary;ForceNoAlign"
             ],
@@ -33,7 +33,7 @@
                 "watch",
                 "run",
                 "--project",
-                "${workspaceFolder}/MyNotepad.csproj"
+                "${workspaceFolder}/Notepadtt.csproj"
             ],
             "problemMatcher": "$msCompile"
         }

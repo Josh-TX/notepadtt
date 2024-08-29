@@ -28,4 +28,4 @@ RUN mkdir /app/data/files && chown $APP_UID /app/data/files
 VOLUME /app/data
 USER $APP_UID
 
-ENTRYPOINT ["./MyNotepad"]
+ENTRYPOINT ["./Notepadtt"]

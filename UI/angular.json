@@ -3,7 +3,7 @@
   "version": 1,
   "newProjectRoot": "projects",
   "projects": {
-    "my-notepad": {
+    "notepadtt": {
       "projectType": "application",
       "schematics": {
         "@schematics/angular:component": {
@@ -65,10 +65,10 @@
           "builder": "@angular-devkit/build-angular:dev-server",
           "configurations": {
             "production": {
-              "buildTarget": "my-notepad:build:production"
+              "buildTarget": "notepadtt:build:production"
             },
             "development": {
-              "buildTarget": "my-notepad:build:development"
+              "buildTarget": "notepadtt:build:development"
             }
           },
           "defaultConfiguration": "development"
@@ -76,7 +76,7 @@
         "extract-i18n": {
           "builder": "@angular-devkit/build-angular:extract-i18n",
           "options": {
-            "buildTarget": "my-notepad:build"
+            "buildTarget": "notepadtt:build"
           }
         },
         "test": {

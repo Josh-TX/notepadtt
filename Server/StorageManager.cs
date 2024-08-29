@@ -4,10 +4,11 @@ using System.Text.RegularExpressions;
 
 public class StorageManager
 {
-#if !DEBUG
-    private const string _fileBasePath = "/data/";
-#else
+    //local debugging is easier (on Windows at least) if it's a relative path. 
+#if DEBUG
     private const string _fileBasePath = "data/";
+#else
+    private const string _fileBasePath = "/data/";
 #endif
     private const string _fileOrderName = ".notepad_file_order.txt";
     private static Info? _info;
@@ -42,7 +43,7 @@ public class StorageManager
 
     public void SaveTabContent(TabContent tabContent)
     {
-        //since this is called a bunch, I don't want to call GetInfo() since that always scans the 
+        //since this is called a lot (every char input), I want to avoid calling GetInfo() since that function always calls Directory.GetFiles()
         var info = _info != null ? _info : GetInfo();
         var tabInfo = info.TabInfos.FirstOrDefault(z => z.FileId == tabContent.FileId);
         if (tabInfo == null)
@@ -60,10 +61,13 @@ public class StorageManager
 
     public Info GetInfo()
     {
-        var existingFilenames = Directory.GetFiles(_fileBasePath).Select(z => Path.GetFileName(z)).Where(z => z != _fileOrderName);
+
+        var existingFilenames =  Directory.Exists(_fileBasePath) 
+            ? Directory.GetFiles(_fileBasePath).Select(z => Path.GetFileName(z)).Where(z => z != _fileOrderName)
+            : Enumerable.Empty<string>();
         if (_info != null)
         {
-            //we've already generated the FileIds, so now we're just detecting changes to the underlying filesystem
+            //we've already generated the FileIds, so now we're just detecting changes to the underlying filesystem (file added or file removed)
             var untrackedFilenames = existingFilenames.Except(_info.TabInfos.Select(z => z.Filename));
             foreach (var untrackedFilename in untrackedFilenames)
             {

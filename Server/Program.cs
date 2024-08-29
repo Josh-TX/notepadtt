@@ -7,7 +7,7 @@ var app = builder.Build();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 app.MapControllers();
-app.MapHub<MyHub>("main-hub");
+app.MapHub<SignalRHub>("main-hub");
 app.UseDeveloperExceptionPage();
 
 var title = Environment.GetEnvironmentVariable("title");

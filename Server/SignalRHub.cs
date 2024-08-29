@@ -1,8 +1,8 @@
 using Microsoft.AspNetCore.SignalR;
 
-public class MyHub : Hub
+public class SignalRHub : Hub
 {
-    public MyHub() : base(){
+    public SignalRHub() : base(){
 
     }
     private static List<Subscription> _subscriptions = new List<Subscription>();
