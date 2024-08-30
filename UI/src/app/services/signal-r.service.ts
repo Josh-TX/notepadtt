@@ -55,7 +55,7 @@ export class SignalRService {
         });
         this.connection.onreconnecting(error => {
             console.log(`Connection lost due to error "${error}". Reconnecting.`);
-            document.body.setAttribute("style", "--primary: #cf630b");
+            document.body.setAttribute("style", "--primary: #d22d2d");
             this.actualSub = null;
             this.isConnected = false;
         });
@@ -64,6 +64,9 @@ export class SignalRService {
             document.body.setAttribute("style", "--primary: #0078D4")
             this.onConnected();
         });
+        this.connection.onclose((error) => {
+            this.onError("lost connection with server");
+        })
         this.connection.on("tabContent", (tabContent: TabContent) => {
             if (this.$tabContent && tabContent.fileId == this.fileId){
                 this.$tabContent.set(tabContent);
@@ -113,7 +116,9 @@ export class SignalRService {
     }
 
     private onError(msg: string){
-        this._handler && this._handler(msg);
+        this.zone.run(() => {
+            this._handler && this._handler(msg);
+        });
     }
 
 
@@ -122,10 +127,10 @@ export class SignalRService {
             return;
         }
         if (this.actualSub){
-            this.connection.invoke("UnsubscribeTabContent", this.actualSub);
+            this.connection.invoke("UnsubscribeTabContent", this.actualSub).catch((e) => this.onError("error synchronizing with server"));
         }
         if (this.desiredSub){
-            this.connection.invoke("SubscribeTabContent", this.desiredSub);
+            this.connection.invoke("SubscribeTabContent", this.desiredSub).catch((e) => this.onError("error synchronizing with server"));
         }
         this.actualSub = this.desiredSub;
     }

@@ -11,7 +11,27 @@ public class SignalRHub : Hub
 
     public override async Task OnConnectedAsync()
     {
-        await Clients.Caller.SendAsync("info", storageManager.GetInfo());
+        Info? info = null;
+        try {
+            info = storageManager.GetInfo();
+        } catch(Exception e){
+            if (e is UnauthorizedAccessException){
+                var fileId = Guid.NewGuid();
+                info = new Info() {
+                    ActiveFileId = fileId,
+                    TabInfos = new List<TabInfo> {
+                        new TabInfo() {
+                            FileId = fileId,
+                            Filename = "SERVER ERROR: " + e.Message.ToString(),
+                            IsProtected = true
+                        }
+                    }
+                };
+            } else {
+                throw;
+            }
+        }
+        await Clients.Caller.SendAsync("info", info);
     }
     public override Task OnDisconnectedAsync(Exception? exception)
     {

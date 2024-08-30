@@ -52,3 +52,38 @@ h1,h2,h3,h4,p {
 .cm-gutterElement{
     padding-right: 8px !important;
 }
+
+.toast-container {
+    position: fixed;
+    bottom: 3vh;
+    left: 8px;
+    right: 8px;
+}
+
+.toast {
+    max-width: 300px;
+    padding: 8px 0 8px 16px;
+    margin: 0 auto;
+    background: #ddd;
+    color: #333;
+    display: flex;
+    justify-content: space-between;
+    box-shadow: 0 2px 4px -1px #0003,
+    0 4px 5px #00000024,
+    0 1px 10px #0000001f;
+}
+
+.toast-error {
+    background: #910808;
+    color: #ffffff;
+}
+
+.toast-undo {
+    color: #0072BC;
+    font-weight: bold;
+    &:hover{
+        text-decoration: underline;
+    }
+    cursor: pointer;
+    padding: 8px 16px;
+}

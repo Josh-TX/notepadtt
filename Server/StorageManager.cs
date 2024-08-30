@@ -59,7 +59,6 @@ public class StorageManager
 
     public Info GetInfo()
     {
-
         var existingFilenames =  Directory.Exists(_fileBasePath) 
             ? Directory.GetFiles(_fileBasePath).Select(z => Path.GetFileName(z)).Where(z => z != _tabDataFilename)
             : Enumerable.Empty<string>();
