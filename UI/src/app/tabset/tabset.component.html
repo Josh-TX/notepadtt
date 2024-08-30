@@ -1,8 +1,8 @@
 <div class="main-container">
     <div class="tab-container">
         @for (tabInfo of $tabInfos(); track tabInfo){
-        <div class="tab" [class.active]="tabInfo.fileId == activeFileId" [class.right-clicked]="tabInfo.fileId == contextMenuFileId" (click)="tabClicked(tabInfo.fileId)"
-            (contextmenu)="onRightClick($event, tabInfo.fileId)">
+        <div class="tab" [class.active]="tabInfo.fileId == activeFileId" [class.right-clicked]="tabInfo.fileId == contextMenuFileId" 
+            [class.error]="errorMessage" (click)="tabClicked(tabInfo.fileId)" (contextmenu)="onRightClick($event, tabInfo.fileId)">
             {{tabInfo.filename}}
             <div *ngIf="!tabInfo.isProtected" class="icon-container close-container" (click)="delete(tabInfo.fileId)">
                 <div class="icon">
@@ -33,6 +33,13 @@
             <div class="toast-undo" (click)="undo()">
                 UNDO
             </div>
+        </div>
+    </div>
+}
+@if (errorMessage){
+    <div class="toast-container" [@inOutAnimation]>
+        <div class="toast toast-error">
+            <div style="padding: 8px 0">{{errorMessage}}</div>
         </div>
     </div>
 }

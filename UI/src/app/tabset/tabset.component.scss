@@ -67,6 +67,9 @@
         &.right-clicked {
             border-top: 2px solid var(--text-contrast)
         }
+        &.error {
+            border-top-color: #d22d2d !important;
+        }
     }
 }
 
@@ -201,6 +204,10 @@
     0 1px 10px #0000001f;
 }
 
+.toast-error {
+    background: #910808;
+    color: #ffffff;
+}
 
 .toast-undo {
     color: #0072BC;

@@ -1,9 +1,11 @@
 import { Component, ViewChild, Inject, effect } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterOutlet } from '@angular/router';
-import { basicSetup } from "codemirror";
+import { minimalSetup } from "codemirror";
 import { EditorState, Extension } from '@codemirror/state';
-import { EditorView } from '@codemirror/view';
+import { EditorView, lineNumbers, highlightActiveLineGutter, 
+    highlightActiveLine
+} from '@codemirror/view';
 import { markdown } from '@codemirror/lang-markdown';
 import { DOCUMENT } from '@angular/common';
 import {
@@ -35,6 +37,7 @@ export class EditorComponent {
         ) 
     { 
         effect(() => {
+            //this angular effect runs each time this.signalR.$tabContent() changes
             var tabContent = this.signalR.$tabContent();
             if (tabContent){
                 if (this.view){
@@ -93,7 +96,10 @@ export class EditorComponent {
             }
             let myEditorElement = this.myEditor.nativeElement;
             this.extension = [
-                basicSetup,
+                minimalSetup,
+                lineNumbers(),
+                highlightActiveLineGutter(),
+                highlightActiveLine(),
                 theme,
                 markdown(),
                 EditorView.updateListener.of(z => {

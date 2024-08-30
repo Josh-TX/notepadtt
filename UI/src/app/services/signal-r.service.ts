@@ -35,6 +35,7 @@ export class SignalRService {
     private desiredSub: string | null = null;
     private infoToUpdate: Info | null = null;
     private isConnected: boolean = false;
+    private _handler: ((msg: string) => any) | null = null;
 
     constructor(
         private zone: NgZone
@@ -54,7 +55,7 @@ export class SignalRService {
         });
         this.connection.onreconnecting(error => {
             console.log(`Connection lost due to error "${error}". Reconnecting.`);
-            document.body.setAttribute("style", "--primary: #d22d2d");
+            document.body.setAttribute("style", "--primary: #cf630b");
             this.actualSub = null;
             this.isConnected = false;
         });
@@ -75,7 +76,7 @@ export class SignalRService {
         this.isConnected = true;
         this.tryUpdateSubscriptions();
         if (this.infoToUpdate != null){
-            this.connection.invoke("InfoChanged", this.infoToUpdate);
+            this.connection.invoke("InfoChanged", this.infoToUpdate).catch((e) => this.onError("error saving data on server"));
             this.infoToUpdate = null;
         }
     }
@@ -83,7 +84,7 @@ export class SignalRService {
     setInfo(info: Info){
         this.$info.set(info);
         if (this.isConnected){
-            this.connection.invoke("InfoChanged", info);
+            this.connection.invoke("InfoChanged", info).catch((e) => this.onError("error saving data on server"));
             this.infoToUpdate = null;
         } else {
             this.infoToUpdate = info;
@@ -101,11 +102,20 @@ export class SignalRService {
     }
 
     tabContentChanged(tabContent: TabContent, updateSignal: boolean = false){
-        this.connection.invoke("TabContentChanged", tabContent);
+        this.connection.invoke("TabContentChanged", tabContent).catch((e) => this.onError("error saving file"));
         if (updateSignal){
             this.$tabContent.set(tabContent);
         }
     }
+
+    registerErrorHandler(handler: (msg: string) => any){
+        this._handler = handler;
+    }
+
+    private onError(msg: string){
+        this._handler && this._handler(msg);
+    }
+
 
     private tryUpdateSubscriptions(){
         if (!this.isConnected || this.actualSub == this.desiredSub){

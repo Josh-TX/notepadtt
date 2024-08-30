@@ -45,7 +45,11 @@ export class TabsetComponent {
     deletedTabIndex: number | undefined;
     deletedTabContent: TabContent | undefined;
     deletedTabTimeout: any;
-    $tabInfos: Signal<TabInfo[]>
+    $tabInfos: Signal<TabInfo[]>;
+    errorMessage: string | undefined;
+    errorMessageTimeout: any;
+
+
     constructor(
         private signalRService: SignalRService
     ){
@@ -73,6 +77,13 @@ export class TabsetComponent {
         if (this.activeFileId){
             this.signalRService.subscribeTabContent(this.activeFileId);
         }
+        this.signalRService.registerErrorHandler(msg => {
+            this.errorMessage = msg;
+            clearTimeout(this.errorMessageTimeout);
+            this.errorMessageTimeout = setTimeout(() => {
+                this.errorMessage = undefined;
+            }, 2500);
+        })
     }
 
     tabClicked(fileId: string){
