@@ -86,7 +86,7 @@ public class StorageManager
             {
                 var fixedFilename = tabDataLine;
                 var args = new List<string>();
-                while (tabDataLine.StartsWith("\\") && fixedFilename.Length > 1)
+                while (fixedFilename.StartsWith("\\") && fixedFilename.Length > 1)
                 {
                     args.Add(fixedFilename.Substring(1, 1));
                     fixedFilename = fixedFilename.Substring(2);
