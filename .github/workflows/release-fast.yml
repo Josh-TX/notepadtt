@@ -1,4 +1,4 @@
-name: Publish Notepadtt to Dockerhub
+name: Publish Notepadtt to Dockerhub Fast
 
 on:
   workflow_dispatch:
@@ -30,6 +30,19 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v2
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v2
+      with:
+        node-version: '18'
+
+    - name: Install dependencies
+      run: npm install
+      working-directory: UI
+
+    - name: Build
+      run: npm run build
+      working-directory: UI
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v2
@@ -42,3 +55,4 @@ jobs:
         password: ${{ secrets.DOCKER_TOKEN }}
         platforms: linux/amd64,linux/arm64
         tags: latest,${{ github.event.inputs.SemVer }}
+        workdir: Server
