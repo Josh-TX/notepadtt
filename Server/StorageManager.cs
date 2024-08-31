@@ -107,7 +107,7 @@ public class StorageManager
             }
         }
         if (existingFilenames.Count() != tabInfos.Count()) {
-            //there's either no fileorder file, or the fileorder data is incomplete (new files were added outside the app)
+            //there's either no tabData file, or the tabdata file is incomplete (new files were added outside the app)
             foreach(var existingFilename in existingFilenames)
             {
                 if (!tabInfos.Any(z => z.Filename == existingFilename))
@@ -119,17 +119,22 @@ public class StorageManager
         if (!tabInfos.Any())
         {
             tabInfos.Add(new TabInfo { FileId = Guid.NewGuid(), Filename = "new 1", IsProtected = false });
+            var fullPath = _fileBasePath + "new 1";
+            System.IO.FileInfo fileInfo = new System.IO.FileInfo(fullPath);
+            fileInfo.Directory!.Create();
+            System.IO.File.WriteAllText(fileInfo.FullName, "\n\n\n\n");
         }
         if (!activeFileId.HasValue)
         {
             activeFileId = tabInfos[0].FileId;
         }
-        var info = new Info
+        var info = new Info 
         {
             ActiveFileId = activeFileId.Value,
             TabInfos = tabInfos
         };
         _info = info;
+        SaveTabDataToDisk(info);
         return _info;
     }
 
@@ -170,11 +175,11 @@ public class StorageManager
             }
         }
         _info = newInfo;
-        SaveFileOrderToDisk(newInfo);
+        SaveTabDataToDisk(newInfo);
     }
 
 
-    private void SaveFileOrderToDisk(Info info){
+    private void SaveTabDataToDisk(Info info){
         var lines = new List<string>();
         foreach(var tabInfo in info.TabInfos)
         {
