@@ -67,6 +67,9 @@
         &.right-clicked {
             border-top: 2px solid var(--text-contrast)
         }
+        &.error {
+            border-top: 2px solid #d22d2d;
+        }
     }
 }
 

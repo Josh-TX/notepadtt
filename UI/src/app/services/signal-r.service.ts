@@ -27,6 +27,7 @@ export class SignalRService {
     $info: WritableSignal<Info | null>;
 
     $tabContent: WritableSignal<TabContent | null>;
+    $errorMessage: WritableSignal<{message: string} | null>;
     private fileId: string | null = null;
 
     private connection: signalR.HubConnection;
@@ -35,12 +36,12 @@ export class SignalRService {
     private desiredSub: string | null = null;
     private infoToUpdate: Info | null = null;
     private isConnected: boolean = false;
-    private _handler: ((msg: string) => any) | null = null;
 
     constructor(
         private zone: NgZone
     ){
         this.$info = signal(null);
+        this.$errorMessage = signal(null);
         this.$tabContent = signal(null);
         var signalR = (<any>window).signalR
         this.connection = new signalR.HubConnectionBuilder()
@@ -54,18 +55,15 @@ export class SignalRService {
             })
         });
         this.connection.onreconnecting(error => {
-            console.log(`Connection lost due to error "${error}". Reconnecting.`);
-            document.body.setAttribute("style", "--primary: #d22d2d");
+            this.$errorMessage.set({message: "disconnected with server. Reconnecting..."});
             this.actualSub = null;
             this.isConnected = false;
         });
         this.connection.onreconnected(() => {
-            console.log(`Connection reestablished`);
-            document.body.setAttribute("style", "--primary: #0078D4")
             this.onConnected();
         });
         this.connection.onclose((error) => {
-            this.onError("lost connection with server");
+            this.$errorMessage.set({message: "lost connection with server"});
         })
         this.connection.on("tabContent", (tabContent: TabContent) => {
             if (this.$tabContent && tabContent.fileId == this.fileId){
@@ -76,18 +74,21 @@ export class SignalRService {
     }
 
     private onConnected(){
-        this.isConnected = true;
-        this.tryUpdateSubscriptions();
-        if (this.infoToUpdate != null){
-            this.connection.invoke("InfoChanged", this.infoToUpdate).catch((e) => this.onError("error saving data on server"));
-            this.infoToUpdate = null;
-        }
+        this.zone.run(() => {
+            this.isConnected = true;
+            this.$errorMessage.set(null);
+            this.tryUpdateSubscriptions();
+            if (this.infoToUpdate != null){
+                this.connection.invoke("InfoChanged", this.infoToUpdate).catch((e) => this.$errorMessage.set({message: "error saving data on server"}));
+                this.infoToUpdate = null;
+            }
+        })
     }
 
     setInfo(info: Info){
         this.$info.set(info);
         if (this.isConnected){
-            this.connection.invoke("InfoChanged", info).catch((e) => this.onError("error saving data on server"));
+            this.connection.invoke("InfoChanged", info).catch((e) => this.$errorMessage.set({message: "error saving data on server"}));
             this.infoToUpdate = null;
         } else {
             this.infoToUpdate = info;
@@ -105,20 +106,10 @@ export class SignalRService {
     }
 
     tabContentChanged(tabContent: TabContent, updateSignal: boolean = false){
-        this.connection.invoke("TabContentChanged", tabContent).catch((e) => this.onError("error saving file"));
+        this.connection.invoke("TabContentChanged", tabContent).catch((e) => this.$errorMessage.set({message: "error saving file"}));
         if (updateSignal){
             this.$tabContent.set(tabContent);
         }
-    }
-
-    registerErrorHandler(handler: (msg: string) => any){
-        this._handler = handler;
-    }
-
-    private onError(msg: string){
-        this.zone.run(() => {
-            this._handler && this._handler(msg);
-        });
     }
 
 
@@ -127,10 +118,10 @@ export class SignalRService {
             return;
         }
         if (this.actualSub){
-            this.connection.invoke("UnsubscribeTabContent", this.actualSub).catch((e) => this.onError("error synchronizing with server"));
+            this.connection.invoke("UnsubscribeTabContent", this.actualSub).catch((e) => this.$errorMessage.set({message: "error synchronizing with server"}));
         }
         if (this.desiredSub){
-            this.connection.invoke("SubscribeTabContent", this.desiredSub).catch((e) => this.onError("error synchronizing with server"));
+            this.connection.invoke("SubscribeTabContent", this.desiredSub).catch((e) => this.$errorMessage.set({message: "error synchronizing with server"}));
         }
         this.actualSub = this.desiredSub;
     }

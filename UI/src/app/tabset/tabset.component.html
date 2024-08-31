@@ -2,7 +2,7 @@
     <div class="tab-container">
         @for (tabInfo of $tabInfos(); track tabInfo){
         <div class="tab" [class.active]="tabInfo.fileId == activeFileId" [class.right-clicked]="tabInfo.fileId == contextMenuFileId" 
-            (click)="tabClicked(tabInfo.fileId)" (contextmenu)="onRightClick($event, tabInfo.fileId)">
+            [class.error]="$errorState()" (click)="tabClicked(tabInfo.fileId)" (contextmenu)="onRightClick($event, tabInfo.fileId)">
             {{tabInfo.filename}}
             <div *ngIf="!tabInfo.isProtected" class="icon-container close-container" (click)="delete(tabInfo.fileId)">
                 <div class="icon">
