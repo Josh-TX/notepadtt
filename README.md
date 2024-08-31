@@ -4,7 +4,7 @@ A simple notepad app similar to notepad++. Notes are auto-saved and synchronized
 
 <p align="center">
   <br>
-    <img src="UI/screenshot.png" height="256"/>
+    <img src="UI/screenshot.png" height="360"/>
   <br>
 </p>
 
