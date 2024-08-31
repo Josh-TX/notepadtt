@@ -144,8 +144,7 @@ export class TabsetComponent {
         if (tabInfos.some(z => z.filename == this.deletedTabInfo!.filename)){
             var altFileName = "new " + this.getNextNewNum();
             alert(`a file named "${this.deletedTabInfo!.filename}" already exists. Recovered file will instead be called "${altFileName}"`);
-            this.deletedTabInfo!.filename = altFileName
-            return;
+            this.deletedTabInfo!.filename = altFileName;
         }
         var index = Math.min(tabInfos.length, this.deletedTabIndex!);
         tabInfos.splice(index, 0, this.deletedTabInfo!);
