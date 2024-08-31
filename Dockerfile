@@ -25,6 +25,7 @@ FROM mcr.microsoft.com/dotnet/aspnet:8.0
 WORKDIR /app
 COPY --from=dotnet-build /app .
 RUN mkdir /data && chown $APP_UID /data
+RUN chown -R $APP_UID /app/wwwroot
 VOLUME /app/data
 USER $APP_UID
 
