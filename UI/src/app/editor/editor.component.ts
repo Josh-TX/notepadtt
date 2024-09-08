@@ -50,7 +50,7 @@ export class EditorComponent {
                     var startMatch = getMatchLength(oldText, newText);
                     var endMatch = getMatchLength(reverseString(oldText), reverseString(newText));
                     this.dispatching = true;
-                    if (startMatch + endMatch < newText.length){
+                    if (startMatch + endMatch <= oldText.length){
                         this.view.dispatch({
                             changes: {
                                 from: startMatch, 
@@ -59,10 +59,15 @@ export class EditorComponent {
                             }
                         });
                     } else {
-                        //this could happen if oldText was ABA, and newText was ABABA
+                        //this could happen if oldText was hi\n and newtext was hi\nbye\n 
+                        //^that'd match 3 at the start and 1 at the end, despite oldText having a length of just 3
                         this.view.dispatch({
-                            changes: {from: 0, to: oldText.length, insert: newText}
+                            changes: {from: startMatch, to: oldText.length, insert: newText.slice(startMatch)}
                         });
+
+                        // this.view.dispatch({
+                        //     changes: {from: 0, to: oldText.length, insert: newText}
+                        // });
                     }
                     this.dispatching = false;
                 } else {

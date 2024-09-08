@@ -5,6 +5,20 @@ public class Info
     /// The order determines the order they appear in the app
     /// </summary>
     public required List<TabInfo> TabInfos { get; set; }
+
+    /// <summary>
+    /// Used to identify stale infos when an update is attempted
+    /// </summary>
+    public required Guid ChangeToken { get; set; }
+
+    public Info DeepCopy()
+    {
+        return new Info {  
+            ActiveFileId = ActiveFileId, 
+            TabInfos = TabInfos.Select(z => new TabInfo { FileId = z.FileId, Filename = z.Filename, IsProtected = z.IsProtected}).ToList(), 
+            ChangeToken = ChangeToken 
+        };
+    }
 }
 
 
@@ -13,7 +27,7 @@ public class Info
 public class TabInfo
 {
     /// <summary>
-    /// The name of the file on disk. Clients should display this
+    /// The name of the file on disk. Clients should display this in the tab
     /// </summary>
     public required string Filename { get; set; }
 
@@ -23,7 +37,7 @@ public class TabInfo
     public required Guid FileId { get; set; }
 
     /// <summary>
-    /// When this is true, the file can't be deleted through the app until it's unprotected
+    /// When true, the web UI has additional measures to prevent accidental deletion
     /// </summary>
     public required bool IsProtected { get; set; }
 }

@@ -16,7 +16,13 @@ export type TabContent = {
 
 export type Info = {
     activeFileId: string | null,
+    tabInfos: TabInfo[]
+}
+
+export type FullInfo = {
+    activeFileId: string | null,
     tabInfos: TabInfo[],
+    changeToken: string
 }
 
 @Injectable({
@@ -36,6 +42,7 @@ export class SignalRService {
     private desiredSub: string | null = null;
     private infoToUpdate: Info | null = null;
     private isConnected: boolean = false;
+    private changeToken: string | null = null;
 
     constructor(
         private zone: NgZone
@@ -49,7 +56,8 @@ export class SignalRService {
             //.configureLogging(signalR.LogLevel.Debug)
             .withAutomaticReconnect()
             .build();
-        this.connection.on("info", (info: Info) => {
+        this.connection.on("info", (info: FullInfo) => {
+            this.changeToken = info.changeToken;
             this.zone.run(() => {
                 this.$info.set(info);
             })
@@ -87,8 +95,12 @@ export class SignalRService {
 
     setInfo(info: Info){
         this.$info.set(info);
+        var fullinfo: FullInfo = {
+            ...info,
+            changeToken: this.changeToken!
+        }
         if (this.isConnected){
-            this.connection.invoke("InfoChanged", info).catch((e) => this.$errorMessage.set({message: "error saving data on server"}));
+            this.connection.invoke("InfoChanged", fullinfo).catch((e) => this.$errorMessage.set({message: "error saving data on server"}));
             this.infoToUpdate = null;
         } else {
             this.infoToUpdate = info;
