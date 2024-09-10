@@ -200,7 +200,7 @@ public class InfoStateService
         var infoBroadcastNeeded = false;
         Guid? replacedFileId = null;
         var oldNameTabInfo = _info.TabInfos.FirstOrDefault(z => z.Filename == oldFilename);
-        var newNameTabInfo = _info.TabInfos.FirstOrDefault(z => z.Filename == oldFilename);
+        var newNameTabInfo = _info.TabInfos.FirstOrDefault(z => z.Filename == newFilename);
         if (oldNameTabInfo != null)
         {
             //since oldNameTabInfo is non-null, this wasn NOT renamed via the UI, and we need to update info
