@@ -15,21 +15,21 @@ public class InfoStateService
         //_info is only null when the server just booted up.
 
         //The source of truth is ultimately the current state of the DATA_BASEPATH directory
-        //However, we also want to preserve file order, active tab, and isProtected tabs based on the tab-data-file
+        //However, we also want to preserve file order, active tab, and isProtected tabs based on the metadata file (if it exists)
 
         var tabInfos = new List<TabInfo>();
 
         var existingFilenames = Directory.Exists(Constants.DATA_BASEPATH)
-            ? Directory.GetFiles(Constants.DATA_BASEPATH).Select(z => Path.GetFileName(z)).Where(z => z != Constants.TAB_DATA_FILENAME)
+            ? Directory.GetFiles(Constants.DATA_BASEPATH).Select(z => Path.GetFileName(z)).Where(z => z != Constants.METADATA_FILENAME)
             : Enumerable.Empty<string>();
         Guid? activeFileId = null;
-        var tabDataFileExists = System.IO.File.Exists(Path.Combine(Constants.DATA_BASEPATH, Constants.TAB_DATA_FILENAME));
-        if (tabDataFileExists)
+        var metadataFileExists = System.IO.File.Exists(Path.Combine(Constants.DATA_BASEPATH, Constants.METADATA_FILENAME));
+        if (metadataFileExists)
         {
-            var tabDataLines = File.ReadAllLines(Path.Combine(Constants.DATA_BASEPATH, Constants.TAB_DATA_FILENAME));
-            foreach (var tabDataLine in tabDataLines)
+            var metadataLines = File.ReadAllLines(Path.Combine(Constants.DATA_BASEPATH, Constants.METADATA_FILENAME));
+            foreach (var metadataLine in metadataLines)
             {
-                var fixedFilename = tabDataLine;
+                var fixedFilename = metadataLine;
                 var args = new List<string>();
                 while (fixedFilename.StartsWith("\\") && fixedFilename.Length > 1)
                 {
@@ -42,6 +42,10 @@ public class InfoStateService
                 {
                     continue; //the file was removed while the server was down
                 }
+                if (tabInfos.Any(z => z.Filename == fixedFilename))
+                {
+                    continue; //just in case the metadataLines contained duplicates.
+                }
                 var tabInfo = new TabInfo
                 {
                     FileId = Guid.NewGuid(),
@@ -49,7 +53,10 @@ public class InfoStateService
                     IsProtected = isProtected,
                 };
                 tabInfos.Add(tabInfo);
-                activeFileId ??= tabInfo.FileId;
+                if (isActive)
+                {
+                    activeFileId ??= tabInfo.FileId;
+                }
             }
         }
 
@@ -85,28 +92,27 @@ public class InfoStateService
             ChangeToken = Guid.NewGuid()
         };
         _info = info;
-        if (!tabDataFileExists)
+        if (!metadataFileExists)
         {
-            //there are 2 reasons we need to save this to disk now (as opposed to waiting for updateInfo to be called)
+            //there are 2 reasons we need to save this to disk now (as opposed to waiting for UpdateInfoToMatchDisk to be called)
             //1. We want to verify we have write permission to the data directory (possible to not have permissions with file mounts)
-            //2. If the server restarts without updateInfo() being called, then the auto-created "new 1" would become protected
-            SaveTabDataToDisk(_info);
+            //2. If the server restarts without UpdateInfoToMatchDisk() being called, then the auto-created "new 1" would become protected
+            SaveMetadataToDisk(_info);
         }
         return _info.DeepCopy();
     }
 
     /// <summary>
-    /// Updates info to match the data directory (only if _info is non-null)
+    /// Updates info to match the disk (only if _info is non-null). Returns 
     /// </summary>
-    public bool UpdateInfoToMatchData()
+    public bool UpdateInfoToMatchDisk()
     {
         if (_info == null)
         {
             return false;
         }
-        //we've already generated the FileIds, so now we're just detecting changes to the underlying filesystem (file added or file removed)
         var existingFilenames = Directory.Exists(Constants.DATA_BASEPATH)
-            ? Directory.GetFiles(Constants.DATA_BASEPATH).Select(z => Path.GetFileName(z)).Where(z => z != Constants.TAB_DATA_FILENAME)
+            ? Directory.GetFiles(Constants.DATA_BASEPATH).Select(z => Path.GetFileName(z)).Where(z => z != Constants.METADATA_FILENAME)
             : Enumerable.Empty<string>();
         var untrackedFilenames = existingFilenames.Except(_info.TabInfos.Select(z => z.Filename));
         foreach (var untrackedFilename in untrackedFilenames)
@@ -122,13 +128,13 @@ public class InfoStateService
         if (anyChanges)
         {
             _info.ChangeToken = Guid.NewGuid();
-            SaveTabDataToDisk(_info);
+            SaveMetadataToDisk(_info);
         }
         return anyChanges;
     }
 
     /// <summary>
-    /// Updates the data directory to match the info (such as deleting & renaming files)
+    /// Updates the disk to match the info (such as deleting & renaming files)
     /// </summary>
     public void UpdateDataToMatchInfo(Info newInfo)
     {
@@ -148,7 +154,7 @@ public class InfoStateService
         }
         foreach (var newTab in newInfo.TabInfos)
         {
-            if (newTab.Filename == Constants.TAB_DATA_FILENAME)
+            if (newTab.Filename == Constants.METADATA_FILENAME)
             {
                 throw new ArgumentException("invalid filename");
             }
@@ -178,35 +184,60 @@ public class InfoStateService
         }
         newInfo.ChangeToken = Guid.NewGuid();
         _info = newInfo;
-        SaveTabDataToDisk(newInfo);
+        SaveMetadataToDisk(newInfo);
     }
 
 
     /// <summary>
-    /// Returns true if we need to update all the clients with new info
+    /// Returns true if we need to broadcast to all the clients the new info
     /// </summary>
-    public bool FileRenamed(string oldFilename, string newFilename)
+    public (bool infoBroadcastNeeded, Guid? replacedFileId) NotifyFileRenamed(string oldFilename, string newFilename)
     {
         if (_info == null)
         {
-            return false;
+            return (false, null);
         }
-        var updateNeeded = false;
-        var affectedTabInfo = _info.TabInfos.FirstOrDefault(z => z.Filename == oldFilename);
-        //if the file was renamed via the UI, affectedTabInfo should be null (since the info was already updated)
-        if (affectedTabInfo != null)
+        var infoBroadcastNeeded = false;
+        Guid? replacedFileId = null;
+        var oldNameTabInfo = _info.TabInfos.FirstOrDefault(z => z.Filename == oldFilename);
+        var newNameTabInfo = _info.TabInfos.FirstOrDefault(z => z.Filename == oldFilename);
+        if (oldNameTabInfo != null)
         {
-            //the file must've been renamed outside of the app.
-            //UpdateInfo() updates the data to match the info... but in this case we need to update the info to match the data
-            affectedTabInfo.Filename = newFilename;
+            //since oldNameTabInfo is non-null, this wasn NOT renamed via the UI, and we need to update info
             _info.ChangeToken = Guid.NewGuid();
-            updateNeeded = true;
+            infoBroadcastNeeded = true;
+            if (newNameTabInfo != null)
+            {
+                //oldFile must have replaced newFile
+                _info.TabInfos.Remove(oldNameTabInfo);
+                //since there could be some active connections to newNameTabInfo, we also might need to broadcast the tabContents
+                replacedFileId = newNameTabInfo.FileId;
+            } else
+            {
+                //traditional rename
+                oldNameTabInfo.Filename = newFilename;
+            }
+        } else
+        {
+            //This probably means it was renamed via the UI
+            if (newNameTabInfo == null) {
+                //but this is unexpected and I'm not sure if it's even possible.
+                //The FileWatcherService already verified that the file exists
+                //so I guess we just add the tabInfo for the untracked file
+                _info.TabInfos.Add(new TabInfo { FileId = Guid.NewGuid(), Filename = newFilename, IsProtected = true });
+                _info.ChangeToken = Guid.NewGuid();
+                infoBroadcastNeeded = true;
+            }
         }
-        return updateNeeded;
+        if (infoBroadcastNeeded)
+        {
+            SaveMetadataToDisk(_info);
+        }
+        return (infoBroadcastNeeded, replacedFileId);
     }
 
     /// <summary>
-    /// Returns true if we need to update all the clients with new info
+    /// Returns true if we need to broadcast the info to all clients
     /// </summary>
     public bool NotifyFileCreated(string createdFilename)
     {
@@ -214,7 +245,7 @@ public class InfoStateService
         {
             return false;
         }
-        var updateNeeded = false;
+        var infoBroadcastNeeded = false;
         var createdTabInfo = _info.TabInfos.FirstOrDefault(z => z.Filename == createdFilename);
         //if the file was created via the UI, createdTabInfo should be non-null (since the info was already updated)
         if (createdTabInfo == null)
@@ -224,14 +255,16 @@ public class InfoStateService
             _info.TabInfos.Add(new TabInfo { FileId = Guid.NewGuid(), Filename = createdFilename, IsProtected = true});
             _info.ChangeToken = Guid.NewGuid();
             UpdateActiveTab(); //if there were no tabInfos, this'll make the newly-added one active
-            updateNeeded = true;
+            infoBroadcastNeeded = true;
+            SaveMetadataToDisk(_info);
+
         }
-        return updateNeeded;
+        return infoBroadcastNeeded;
     }
 
 
     /// <summary>
-    /// Returns true if we need to update all the clients with new info
+    /// Returns true if we need to broadcast the info to all clients
     /// </summary>
     public bool NotifyFileDeleted(string deletedFilename)
     {
@@ -239,7 +272,7 @@ public class InfoStateService
         {
             return false;
         }
-        var updateNeeded = false;
+        var infoBroadcastNeeded = false;
         var tabInfoToDelete = _info.TabInfos.FirstOrDefault(z => z.Filename == deletedFilename);
         //if the file was deleted via the UI, tabInfoToDelete should be null (since the info was already updated)
         if (tabInfoToDelete != null)
@@ -249,15 +282,16 @@ public class InfoStateService
             _info.TabInfos.Remove(tabInfoToDelete);
             _info.ChangeToken = Guid.NewGuid();
             UpdateActiveTab();
-            updateNeeded = true;
+            infoBroadcastNeeded = true;
+            SaveMetadataToDisk(_info);
         }
-        return updateNeeded;
+        return infoBroadcastNeeded;
     }
 
     /// <summary>
     /// Returns true if we the file was just created via the UI
     /// </summary>
-    public bool WasFileJustCreated(string filename)
+    public bool WasFileCreatedViaUI(string filename)
     {
         var entryExists = _fileLastCreatedDict.TryGetValue(filename, out var updateDate);
         if (!entryExists)
@@ -285,7 +319,7 @@ public class InfoStateService
     }
 
 
-    private void SaveTabDataToDisk(Info info){
+    private void SaveMetadataToDisk(Info info){
         var lines = new List<string>();
         foreach(var tabInfo in info.TabInfos)
         {
@@ -300,7 +334,7 @@ public class InfoStateService
             }
             lines.Add(line);
         }
-        System.IO.FileInfo fileInfo = new System.IO.FileInfo(Path.Combine(Constants.DATA_BASEPATH, Constants.TAB_DATA_FILENAME));
+        System.IO.FileInfo fileInfo = new System.IO.FileInfo(Path.Combine(Constants.DATA_BASEPATH, Constants.METADATA_FILENAME));
         fileInfo.Directory!.Create();
         System.IO.File.WriteAllLines(fileInfo.FullName, lines);
     }

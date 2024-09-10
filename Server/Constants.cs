@@ -9,6 +9,6 @@ public class Constants
     public const string DATA_BASEPATH = "/data";
 #endif
 
-    public const string TAB_DATA_FILENAME = ".notepadtt_tab_data.txt";
+    public const string METADATA_FILENAME = ".notepadtt_metadata.txt";
 
 }

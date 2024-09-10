@@ -41,11 +41,11 @@ public class FileWatcherService : BackgroundService
         {
             return; //not sure how this could happen
         }
-        if (e.Name == Constants.TAB_DATA_FILENAME)
+        if (e.Name == Constants.METADATA_FILENAME)
         {
             return;
         }
-        var changedViaUI = _tabContentService.WasFileChangedViaUI(e.Name) || _infoStateService.WasFileJustCreated(e.Name);
+        var changedViaUI = _tabContentService.WasFileChangedViaUI(e.Name) || _infoStateService.WasFileCreatedViaUI(e.Name);
         if (changedViaUI)
         {
             return; //since it was changed via the UI, signalR already updated other clients
@@ -55,49 +55,7 @@ public class FileWatcherService : BackgroundService
         {
             return; //somehow this file isn't being tracked, so no need to update clients about changes to a file it doesn't know about
         }
-        var connectionIds = _tabSubscriptionService.GetConnectionIds(tabInfo.FileId);
-        if (!connectionIds.Any())
-        {
-            return; //none of the clients are currently viewing the tab for this file
-        }
-
-        //When I use the real windows Notepad++ app to save a file I have open in notepadtt, there are 2 problems:
-        //1. The FileWatcher triggers this function so fast that I get an exception calling ReadAllText because the file is in-use. 
-        //2. This OnChanged method gets called twice even though just a single file is saved. I guess saving is not an atomic operation?
-        // Because of these 2 problems, we need to delay and debounce the changes, hence the _fileChangeTokenDict
-        var token = Guid.NewGuid();
-        _fileChangeTokenDict[e.Name] = token;
-        await Task.Delay(20); //in my testing, the two OnChanged calls happen less than 5ms apart, so 20ms should be plenty
-        _fileChangeTokenDict.TryGetValue(e.Name, out var currentToken);
-        if (token != currentToken)
-        {
-            return; //another change event for the same file occurred during the Task.Delay()
-        }
-        string? text = null;
-        //and just in case the 20ms wasn't enough, I've got a try-catch loop
-        for (var i = 0; i < 5; i++){
-            try {
-                text = System.IO.File.ReadAllText(e.FullPath);
-                break;
-            }
-            catch (IOException) {
-                if (i == 4){
-                    throw;
-                }
-            }
-            await Task.Delay(50 + 150 * i);
-            _fileChangeTokenDict.TryGetValue(e.Name, out currentToken);
-            if (token != currentToken)
-            {
-                return; //another change event for the same file occurred during the Task.Delay()
-            }
-        }
-        var tabContent = new TabContent
-        {
-            FileId = tabInfo.FileId,
-            Text = text!
-        };
-        await _hubContext.Clients.Clients(connectionIds).SendAsync("tabContent", tabContent);
+        await BroadcastFileChange(e.Name, tabInfo.FileId);
     }
 
     private async void OnCreated(object source, FileSystemEventArgs e)
@@ -106,11 +64,12 @@ public class FileWatcherService : BackgroundService
         {
             return; //not sure how this could happen
         }
-        if (e.Name == Constants.TAB_DATA_FILENAME){
+        if (e.Name == Constants.METADATA_FILENAME)
+        {
             return;
         }
-        var updateNeeded = _infoStateService.NotifyFileCreated(e.Name);
-        if (updateNeeded)
+        var infoBroadcastNeeded = _infoStateService.NotifyFileCreated(e.Name);
+        if (infoBroadcastNeeded)
         {
             await _hubContext.Clients.All.SendAsync("Info", _infoStateService.GetInfo());
         }
@@ -123,8 +82,8 @@ public class FileWatcherService : BackgroundService
             return; //not sure how this could happen
         }
         //we don't need to check for TAB_DATA_FILENAME
-        var updateNeeded = _infoStateService.NotifyFileDeleted(e.Name);
-        if (updateNeeded)
+        var infoBroadcastNeeded = _infoStateService.NotifyFileDeleted(e.Name);
+        if (infoBroadcastNeeded)
         {
             await _hubContext.Clients.All.SendAsync("Info", _infoStateService.GetInfo());
         }
@@ -140,11 +99,75 @@ public class FileWatcherService : BackgroundService
         {
             return; //not sure how this could happen
         }
-        var updateNeeded = _infoStateService.FileRenamed(e.OldName, e.Name);
-        if (updateNeeded)
+        if (e.Name == Constants.METADATA_FILENAME)
+        {
+            return;
+        }
+        var tuple = _infoStateService.NotifyFileRenamed(e.OldName, e.Name);
+        if (tuple.infoBroadcastNeeded)
         {
             await _hubContext.Clients.All.SendAsync("Info", _infoStateService.GetInfo());
         }
+        if (tuple.replacedFileId.HasValue)
+        {
+            await BroadcastFileChange(e.Name, tuple.replacedFileId.Value);
+        }
+    }
+
+    private async Task BroadcastFileChange(string filename, Guid fileId)
+    {
+        var connectionIds = _tabSubscriptionService.GetConnectionIds(fileId);
+        if (!connectionIds.Any())
+        {
+            return; //none of the clients are currently viewing the tab for this file
+        }
+        //most apps seem to trigger multiple change events in quick succession (less than 5ms)
+        //furthermore, there's often an error attempting to ReadAllText immediately after the 1st of several change events
+        //therefore, I'll always delay 20 ms, and debounce to just the latest one
+        var token = Guid.NewGuid();
+        _fileChangeTokenDict[filename] = token;
+        await Task.Delay(20);
+        _fileChangeTokenDict.TryGetValue(filename, out var currentToken);
+        if (token != currentToken)
+        {
+            return; //another change event for the same file occurred during the Task.Delay()
+        }
+        string? text = null;
+        //because of the possible errors calling ReadAllText, we'll have some retry logic
+        for (var i = 0; i < 5; i++)
+        {
+            try
+            {
+                var fullPath = Path.Combine(Constants.DATA_BASEPATH, filename);
+                if (!System.IO.File.Exists(fullPath))
+                {
+                    return; //file was deleted... maybe this file was a temporary file that was cleaned up?
+                }
+                text = System.IO.File.ReadAllText(fullPath);
+                break;
+            }
+            catch (IOException)
+            {
+                if (i == 4)
+                {
+                    throw;
+                }
+            }
+            await Task.Delay(50 + 150 * i);
+            //once again, we need to debounce concurrent operations on the same file
+            _fileChangeTokenDict.TryGetValue(filename, out currentToken);
+            if (token != currentToken)
+            {
+                return;
+            }
+        }
+        var tabContent = new TabContent
+        {
+            FileId = fileId,
+            Text = text!
+        };
+        connectionIds = _tabSubscriptionService.GetConnectionIds(fileId);
+        await _hubContext.Clients.Clients(connectionIds).SendAsync("tabContent", tabContent);
     }
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
