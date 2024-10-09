@@ -1,0 +1,5 @@
+<div class="footer">
+    <div class="footer-button" (click)="undo()" [class.disabled]="!$canUndo()">undo</div>
+    <div class="footer-button" (click)="redo()" [class.disabled]="!$canRedo()">redo</div>
+    <div class="footer-button" (click)="toggleWordWrap()"><span *ngIf="$wordWrap()" class="check-container">&#x2713;</span>&nbsp;&nbsp;&nbsp; word-wrap</div>
+</div>

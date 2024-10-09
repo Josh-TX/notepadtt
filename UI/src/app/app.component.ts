@@ -3,13 +3,14 @@ import { CommonModule } from '@angular/common';
 import { RouterOutlet } from '@angular/router';
 import { TabsetComponent } from './tabset/tabset.component';
 import { EditorComponent } from './editor/editor.component';
+import { FooterComponent } from './footer/footer.component';
 import { SignalRService, Info } from './services/signal-r.service';
 import { animate, style, transition, trigger } from '@angular/animations';
 
 @Component({
     selector: 'app-root',
     standalone: true,
-    imports: [CommonModule, RouterOutlet, TabsetComponent, EditorComponent],
+    imports: [CommonModule, RouterOutlet, TabsetComponent, EditorComponent, FooterComponent],
     templateUrl: './app.component.html',
     animations: [
         trigger(

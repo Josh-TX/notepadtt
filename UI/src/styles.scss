@@ -1,6 +1,9 @@
 
-
+html {
+    height: 100%;
+}
 body {
+    height: 100%;
     margin: 0;
 
     font-family: Arial, Helvetica, sans-serif;
@@ -12,9 +15,14 @@ body {
     --border-color-contrast: #BBB;
     --bg-hover: #ddd;
     --text-muted: #777;
+    --text-very-muted: #AAA;
     --text-contrast: #000;
     --text-main: #333;
     --primary: #0078D4;
+}
+
+.cm-scroller {
+    overflow-x: visible !important;
 }
 
 @media(prefers-color-scheme: dark){
@@ -30,6 +38,7 @@ body {
         --border-color-contrast: #454545;
         --bg-hover: #323232;
         --text-muted: #9D9D9D;
+        --text-very-muted: #555;
         --text-contrast: #FFF;
         --text-main: #CCC;
     }

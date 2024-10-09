@@ -5,6 +5,26 @@ public class InfoStateService
 {
     private Info? _info;
     private ConcurrentDictionary<string, DateTime> _fileLastCreatedDict = new ConcurrentDictionary<string, DateTime>();
+    private Regex? _includeRegex = null;
+    private Regex? _excludeRegex = null;
+    private int _maxkb;
+
+    public InfoStateService()
+    {
+        var includePattern = Environment.GetEnvironmentVariable("INCLUDE_FILES");
+        if (includePattern != null)
+        {
+            string regexStr = "^" + Regex.Escape(includePattern).Replace(@"\*", ".*").Replace(@"\?", ".") + "$";
+            _includeRegex = new Regex(regexStr, RegexOptions.IgnoreCase);
+        }
+        var excludePattern = Environment.GetEnvironmentVariable("EXCLUDE_FILES");
+        if (excludePattern != null)
+        {
+            string regexStr = "^" + Regex.Escape(excludePattern).Replace(@"\*", ".*").Replace(@"\?", ".") + "$";
+            _excludeRegex = new Regex(regexStr, RegexOptions.IgnoreCase);
+        }
+        _maxkb = int.TryParse(Environment.GetEnvironmentVariable("MAXKB"), out var n) ? n : 200; //default to 200kb
+    }
 
     public Info GetInfo()
     {
@@ -15,7 +35,7 @@ public class InfoStateService
         //_info is only null when the server just booted up.
 
         //The source of truth is ultimately the current state of the DATA_BASEPATH directory
-        //However, we also want to preserve file order, active tab, and isProtected tabs based on the metadata file (if it exists)
+        //However, we also want to preserve file order, active tab, and isProtected tabs using the metadata file (if it exists)
 
         var tabInfos = new List<TabInfo>();
 
@@ -65,7 +85,7 @@ public class InfoStateService
             //files were added while the server was down
             foreach (var existingFilename in existingFilenames)
             {
-                if (!tabInfos.Any(z => z.Filename == existingFilename))
+                if (!tabInfos.Any(z => z.Filename == existingFilename) && ShouldTrackFile(existingFilename))
                 {
                     tabInfos.Add(new TabInfo { FileId = Guid.NewGuid(), Filename = existingFilename, IsProtected = true });
                 }
@@ -114,7 +134,7 @@ public class InfoStateService
         var existingFilenames = Directory.Exists(Constants.DATA_BASEPATH)
             ? Directory.GetFiles(Constants.DATA_BASEPATH).Select(z => Path.GetFileName(z)).Where(z => z != Constants.METADATA_FILENAME)
             : Enumerable.Empty<string>();
-        var untrackedFilenames = existingFilenames.Except(_info.TabInfos.Select(z => z.Filename));
+        var untrackedFilenames = existingFilenames.Except(_info.TabInfos.Select(z => z.Filename)).Where(ShouldTrackFile);
         foreach (var untrackedFilename in untrackedFilenames)
         {
             _info.TabInfos.Add(new TabInfo { FileId = Guid.NewGuid(), Filename = untrackedFilename, IsProtected = true });
@@ -203,7 +223,7 @@ public class InfoStateService
         var newNameTabInfo = _info.TabInfos.FirstOrDefault(z => z.Filename == newFilename);
         if (oldNameTabInfo != null)
         {
-            //since oldNameTabInfo is non-null, this wasn NOT renamed via the UI, and we need to update info
+            //the info was already tracking this file, but it wasn't renamed via the UI
             _info.ChangeToken = Guid.NewGuid();
             infoBroadcastNeeded = true;
             if (newNameTabInfo != null)
@@ -214,19 +234,22 @@ public class InfoStateService
                 replacedFileId = newNameTabInfo.FileId;
             } else
             {
-                //traditional rename
+                //traditional rename of a file
                 oldNameTabInfo.Filename = newFilename;
             }
         } else
         {
-            //This probably means it was renamed via the UI
-            if (newNameTabInfo == null) {
-                //but this is unexpected and I'm not sure if it's even possible.
-                //The FileWatcherService already verified that the file exists
-                //so I guess we just add the tabInfo for the untracked file
-                _info.TabInfos.Add(new TabInfo { FileId = Guid.NewGuid(), Filename = newFilename, IsProtected = true });
-                _info.ChangeToken = Guid.NewGuid();
-                infoBroadcastNeeded = true;
+            if (newNameTabInfo != null)
+            {
+                //the file must've been renamed via the UI, and so no need to do anything more
+            } else {
+                //this file was not being tracked at all. Either the file shoudln't be tracked(), or perhaps it was moved here from outside the /data directory
+                if (ShouldTrackFile(newFilename))
+                {
+                    _info.TabInfos.Add(new TabInfo { FileId = Guid.NewGuid(), Filename = newFilename, IsProtected = true });
+                    _info.ChangeToken = Guid.NewGuid();
+                    infoBroadcastNeeded = true;
+                }
             }
         }
         if (infoBroadcastNeeded)
@@ -247,16 +270,18 @@ public class InfoStateService
         }
         var infoBroadcastNeeded = false;
         var createdTabInfo = _info.TabInfos.FirstOrDefault(z => z.Filename == createdFilename);
-        //if the file was created via the UI, createdTabInfo should be non-null (since the info was already updated)
+        //if the file was created via the UI, createdTabInfo would be non-null
         if (createdTabInfo == null)
         {
-            //the file must've been deleted outside of the app.
-            //UpdateInfo() updates the data to match the info... but in this case we need to update the info to match the data
-            _info.TabInfos.Add(new TabInfo { FileId = Guid.NewGuid(), Filename = createdFilename, IsProtected = true});
-            _info.ChangeToken = Guid.NewGuid();
-            UpdateActiveTab(); //if there were no tabInfos, this'll make the newly-added one active
-            infoBroadcastNeeded = true;
-            SaveMetadataToDisk(_info);
+            //the file must've been created not via the UI
+            if (ShouldTrackFile(createdFilename))
+            {
+                _info.TabInfos.Add(new TabInfo { FileId = Guid.NewGuid(), Filename = createdFilename, IsProtected = true});
+                _info.ChangeToken = Guid.NewGuid();
+                UpdateActiveTab(); //if there were no tabInfos, this'll make the newly-added one active
+                infoBroadcastNeeded = true;
+                SaveMetadataToDisk(_info);
+            }
 
         }
         return infoBroadcastNeeded;
@@ -274,11 +299,10 @@ public class InfoStateService
         }
         var infoBroadcastNeeded = false;
         var tabInfoToDelete = _info.TabInfos.FirstOrDefault(z => z.Filename == deletedFilename);
-        //if the file was deleted via the UI, tabInfoToDelete should be null (since the info was already updated)
+        //if the file was deleted via the UI, tabInfoToDeleteshould would be null
         if (tabInfoToDelete != null)
         {
-            //the file must've been deleted outside of the app.
-            //UpdateInfo() updates the data to match the info... but in this case we need to update the info to match the data
+            //the file must've been deleted not via the UI
             _info.TabInfos.Remove(tabInfoToDelete);
             _info.ChangeToken = Guid.NewGuid();
             UpdateActiveTab();
@@ -318,10 +342,10 @@ public class InfoStateService
         }
     }
 
-
-    private void SaveMetadataToDisk(Info info){
+    private void SaveMetadataToDisk(Info info)
+    {
         var lines = new List<string>();
-        foreach(var tabInfo in info.TabInfos)
+        foreach (var tabInfo in info.TabInfos)
         {
             var line = tabInfo.Filename;
             if (tabInfo.IsProtected)
@@ -337,5 +361,24 @@ public class InfoStateService
         System.IO.FileInfo fileInfo = new System.IO.FileInfo(Path.Combine(Constants.DATA_BASEPATH, Constants.METADATA_FILENAME));
         fileInfo.Directory!.Create();
         System.IO.File.WriteAllLines(fileInfo.FullName, lines);
+    }
+
+    private bool ShouldTrackFile(string filename)
+    {
+        if (_includeRegex != null && !_includeRegex.IsMatch(filename))
+        {
+            return false;
+        }
+        if (_excludeRegex != null && _excludeRegex.IsMatch(filename))
+        {
+            return false;
+        }
+        var fileInfo = new System.IO.FileInfo(Path.Combine(Constants.DATA_BASEPATH, filename));
+        double kb = fileInfo.Length / 1024d;
+        if (kb > _maxkb)
+        {
+            return false;
+        }
+        return true;
     }
 }

@@ -2,7 +2,6 @@ import { Component, ViewChild, Inject, ElementRef, Signal, computed, effect } fr
 import { CommonModule } from '@angular/common';
 import { RouterOutlet } from '@angular/router';
 import { SignalRService, TabContent, TabInfo } from '../services/signal-r.service';
-import { BrowserAnimationsModule } from '@angular/platform-browser/animations';
 import { animate, style, transition, trigger } from '@angular/animations';
 
 

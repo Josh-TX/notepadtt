@@ -1,7 +1,12 @@
+<div style="display: flex; flex-direction: column; height: 100%; min-height: 1px;">
+
 @if ($info()){
     <tabset></tabset>
     @if($info()!.tabInfos.length){
-        <editor></editor>
+        <div style="flex: 1; overflow: auto;">
+            <editor></editor>
+        </div>
+        <footer></footer>
     } @else {
         <h3 class="text-center text-muted" style="margin-top: 1.5rem;">No File Opened</h3>
         <p class="text-center text-muted" style="margin-top: .5rem;">click the plus icon in the top right</p>
@@ -21,3 +26,4 @@
         </div>
     </div>
 }
+</div>

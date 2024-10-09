@@ -2,9 +2,12 @@ import { Component, ViewChild, Inject, effect } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterOutlet } from '@angular/router';
 import { minimalSetup } from "codemirror";
-import { EditorState, Extension } from '@codemirror/state';
+import { Compartment, EditorState, Extension, StateEffect } from '@codemirror/state';
 import { EditorView, lineNumbers, highlightActiveLineGutter, 
-    highlightActiveLine
+    highlightActiveLine,
+    highlightSpecialChars,
+    drawSelection,
+    keymap,
 } from '@codemirror/view';
 import { markdown } from '@codemirror/lang-markdown';
 import { DOCUMENT } from '@angular/common';
@@ -15,7 +18,8 @@ import {
     oneLight
 } from './light-theme';
 import { SignalRService } from '../services/signal-r.service';
-
+import { FooterService } from '../services/footer.service';
+import { undo, redo, history, historyField, defaultKeymap, historyKeymap, } from "@codemirror/commands";
 
 @Component({
     selector: 'editor',
@@ -25,22 +29,26 @@ import { SignalRService } from '../services/signal-r.service';
 })
 export class EditorComponent {
 
+    private wordWrapCompartment = new Compartment();
+    private historyCompartment = new Compartment();
     private view: EditorView | undefined;
-    private extension: Extension | undefined;
     private init: boolean = false;
     private dispatching: boolean = false;
+    private wordWrap: boolean = false;
+    private lastFileId: string | undefined;
 
     @ViewChild('myeditor') myEditor: any;
     constructor(
         @Inject(DOCUMENT) private document: Document, 
-        private signalR: SignalRService
+        private signalR: SignalRService,
+        private footerService: FooterService
         ) 
     { 
         effect(() => {
             //this angular effect runs each time this.signalR.$tabContent() changes
             var tabContent = this.signalR.$tabContent();
             if (tabContent){
-                if (this.view){
+                if (this.view && tabContent.fileId == this.lastFileId){
                     var oldText = this.view.state.doc.toString();
                     var newText = tabContent.text;
                     if (oldText == newText){
@@ -61,20 +69,54 @@ export class EditorComponent {
                     } else {
                         //this could happen if oldText was hi\n and newtext was hi\nbye\n 
                         //^that'd match 3 at the start and 1 at the end, despite oldText having a length of just 3
+                        //in this case, we keep the common start part, and replace everything after with newText
                         this.view.dispatch({
                             changes: {from: startMatch, to: oldText.length, insert: newText.slice(startMatch)}
                         });
-
-                        // this.view.dispatch({
-                        //     changes: {from: 0, to: oldText.length, insert: newText}
-                        // });
                     }
                     this.dispatching = false;
+
+                    //the undo history gets very confusing when there's an external edit, and so it's probably best to clear it
+                    //it's unlikely that the user intends to undo an external edit, but that's what would happen if we didn't clear it
+                    this.clearUndoHistory();
                 } else {
+                    this.lastFileId = tabContent.fileId;
                     this.renderText(tabContent.text);
                 }
             } 
         });
+        effect(() => {
+            this.wordWrap = this.footerService.$wordWrap();
+            this.updateWordWrap();
+        });
+        this.footerService.registerUndoHandler(() => {
+            undo(this.view!);
+        });
+        this.footerService.registerRedoHandler(() => {
+            redo(this.view!);
+        });
+    }
+
+    private updateWordWrap(){
+        if (this.view){
+            this.view.dispatch({
+                effects: [this.wordWrapCompartment.reconfigure(
+                    this.wordWrap ? EditorView.lineWrapping : []
+                )]
+            });
+        }
+    }
+
+    private clearUndoHistory() {
+        if (this.view){
+            this.view.dispatch({
+                effects: this.historyCompartment.reconfigure([]) //first remove history() to clear it!!
+            });
+            this.view.dispatch({
+                effects: this.historyCompartment.reconfigure([history()])
+            });
+            setTimeout(() => this.footerService.$canUndo.set(false));
+        }
     }
 
     ngAfterViewInit(){
@@ -89,10 +131,9 @@ export class EditorComponent {
         if (this.view){
             let newState = EditorState.create({
                 doc: text,
-                extensions: this.extension,
+                extensions: this.getExtension(),
             });
             this.view.setState(newState);
-            return
         } else {
             //first render
             var theme: any = oneLight
@@ -100,33 +141,57 @@ export class EditorComponent {
                 theme = oneDark;
             }
             let myEditorElement = this.myEditor.nativeElement;
-            this.extension = [
-                minimalSetup,
-                lineNumbers(),
-                highlightActiveLineGutter(),
-                highlightActiveLine(),
-                theme,
-                markdown(),
-                EditorView.updateListener.of(z => {
-                    if (z.docChanged && !this.dispatching) {
-                        var text = z.state.doc.toString();
-                        var tabContent = this.signalR.$tabContent();
-                        if (tabContent){
-                            var fileId = tabContent.fileId;
-                            this.signalR.tabContentChanged({fileId: fileId, text: text});
-                        }
-                    }
-                })
-            ];
             let state = EditorState.create({
                 doc: text,
-                extensions: this.extension,
+                extensions: this.getExtension(),
             });
             this.view = new EditorView({
                 state,
                 parent: myEditorElement,
             });
         }
+    }
+
+    private getExtension(): Extension {
+        var theme: any = oneLight
+        if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+            theme = oneDark;
+        }
+        var wordWrapExt: Extension[] = [];
+        if (this.wordWrap){
+            wordWrapExt.push(EditorView.lineWrapping);
+        }
+        var extension: Extension[] = [
+            highlightSpecialChars(),
+            this.historyCompartment.of(history()),
+            drawSelection(),
+            keymap.of([
+                ...defaultKeymap,
+                ...historyKeymap,
+            ]),
+            lineNumbers(),
+            highlightActiveLineGutter(),
+            highlightActiveLine(),
+            theme,
+            markdown(),
+            this.wordWrapCompartment.of(wordWrapExt),
+            EditorView.updateListener.of(update  => {
+                if (update.docChanged && !this.dispatching) {
+                    var text = update.state.doc.toString();
+                    var tabContent = this.signalR.$tabContent();
+                    if (tabContent){
+                        var fileId = tabContent.fileId;
+                        this.signalR.tabContentChanged({fileId: fileId, text: text});
+
+                        var historyState = <{done: any[], undone: any[]}>this.view!.state.field(historyField);
+                        //for some reason, the done stack will have 1 extra item that's inserted upon focusing in the editor. 
+                        this.footerService.$canUndo.set(historyState.done.length > 1);
+                        this.footerService.$canRedo.set(historyState.undone.length > 0);
+                    }
+                }
+            })
+        ];
+        return extension
     }
 }
 
@@ -147,4 +212,8 @@ function getMatchLength(str1: string, str2: string): number {
     }
 }
 
+
+function syntaxHighlighting(defaultHighlightStyle: any, arg1: { fallback: boolean; }): Extension {
+    throw new Error('Function not implemented.');
+}
 
