@@ -84,11 +84,11 @@ export class EditorComponent {
                     this.renderText(tabContent.text);
                 }
             } 
-        });
+        }, { allowSignalWrites: true });
         effect(() => {
             this.wordWrap = this.footerService.$wordWrap();
             this.updateWordWrap();
-        });
+        }, { allowSignalWrites: true });
         this.footerService.registerUndoHandler(() => {
             undo(this.view!);
         });
@@ -189,9 +189,33 @@ export class EditorComponent {
                         this.footerService.$canRedo.set(historyState.undone.length > 0);
                     }
                 }
+                if (update.changes){
+                    this.updateFooter();
+                }
             })
         ];
         return extension
+    }
+
+    private updateFooter(){
+        if (!this.view){
+            return;
+        }
+        var state = this.view.state;
+        var doc = state.doc;
+        var selection = state.selection.main
+        var toLine = doc.lineAt(selection.to);
+        this.footerService.$footerData.set({
+            length: doc.length,
+            lines: doc.lines,
+            ln: toLine.number,
+            col: 1 + selection.to - toLine.from,
+            pos: selection.to,
+            selectedLength: selection.to > selection.from ? selection.to - selection.from : undefined,
+            selectedLines: selection.to > selection.from 
+                ? 1 + toLine.number - doc.lineAt(selection.from).number
+                : undefined,
+        })
     }
 }
 

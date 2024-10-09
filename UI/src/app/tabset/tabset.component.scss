@@ -175,7 +175,7 @@
 }
 
 .close-container{
-    opacity: 0;
+    opacity: 0; //on mobile, we want the close button hidden until it's active
     pointer-events: none;
 }
 

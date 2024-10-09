@@ -1,5 +1,17 @@
 <div class="footer">
     <div class="footer-button" (click)="undo()" [class.disabled]="!$canUndo()">undo</div>
     <div class="footer-button" (click)="redo()" [class.disabled]="!$canRedo()">redo</div>
-    <div class="footer-button" (click)="toggleWordWrap()"><span *ngIf="$wordWrap()" class="check-container">&#x2713;</span>&nbsp;&nbsp;&nbsp; word-wrap</div>
+    <div class="footer-button" (click)="toggleWordWrap()">
+        <span *ngIf="$wordWrap()" class="check-container">&#x2713;</span>&nbsp;&nbsp;&nbsp; word-wrap</div>
+    <div style="flex-grow: 1;"></div>
+    <div class="footer-info-group" style="padding-right: 12px;">
+        <div class="footer-info">length: {{$footerData().length}}</div>
+        <div class="footer-info">lines: {{$footerData().lines}}</div>
+    </div>
+    <div class="footer-info-group" style="min-width: 210px;">
+        <div class="footer-info">Ln: {{$footerData().ln}}</div>
+        <div class="footer-info">Col: {{$footerData().col}}</div>
+        <div class="footer-info" *ngIf="!$footerData().selectedLength">Pos: {{$footerData().pos}}</div>
+        <div class="footer-info" *ngIf="$footerData().selectedLength">Sel: {{$footerData().selectedLength}} | {{$footerData().selectedLines}}</div>
+    </div>
 </div>

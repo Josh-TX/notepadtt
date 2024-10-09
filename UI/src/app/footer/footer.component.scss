@@ -1,9 +1,11 @@
 .footer{
+    font-size: 14px;
     padding: 2px;
     display: flex;
     gap: 4px;
     border-top: 1px solid var(--border-color);
     background: var(--bg-dark);
+    overflow: hidden;
 
     -webkit-user-select: none;
     /* Safari */
@@ -14,12 +16,12 @@
 }
 
 .footer-button{
-    font-size: 0.8rem;
     position: relative;
     cursor: pointer;
     padding: 2px 6px;
     color: var(--text-muted);
     border-radius: 2px;
+    white-space: nowrap;
     &:hover {
         background: var(--bg-hover);
         color: var(--text-contrast);
@@ -31,6 +33,29 @@
     }
 }
 
+
+
+
+.footer-info-group {
+    display: flex;
+    padding: 0 2px;
+}
+.footer-info-group:last-child{
+    display: none;
+}
+
+@media (min-width: 600px) {
+    .footer-info-group:last-child {
+        display: flex;
+    }
+}
+
+
+.footer-info {
+    padding: 2px 4px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
 
 
 .check-container{

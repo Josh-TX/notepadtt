@@ -1,6 +1,6 @@
 import { Component, Signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FooterService } from '../services/footer.service';
+import { FooterData, FooterService } from '../services/footer.service';
 
 
 @Component({
@@ -15,6 +15,7 @@ export class FooterComponent {
     $wordWrap: Signal<boolean>
     $canUndo: Signal<boolean>
     $canRedo: Signal<boolean>
+    $footerData: Signal<FooterData>
 
     constructor(
         private footerService: FooterService
@@ -22,6 +23,7 @@ export class FooterComponent {
         this.$wordWrap = footerService.$wordWrap;
         this.$canUndo = footerService.$canUndo;
         this.$canRedo = footerService.$canRedo;
+        this.$footerData = footerService.$footerData;
     }
 
     undo(){
