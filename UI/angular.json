@@ -48,7 +48,8 @@
               "outputHashing": "all"
             },
             "pages": {
-              "outputHashing": "all"
+              "outputHashing": "all",
+              "baseHref": "/notepadtt/" 
             },
             "development": {
               "optimization": false,
