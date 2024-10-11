@@ -4,7 +4,7 @@ import { RouterOutlet } from '@angular/router';
 import { TabsetComponent } from './tabset/tabset.component';
 import { EditorComponent } from './editor/editor.component';
 import { FooterComponent } from './footer/footer.component';
-import { SignalRService, Info } from './services/signal-r.service';
+import { IRealTimeService, Info } from './services/real-time.service';
 import { animate, style, transition, trigger } from '@angular/animations';
 
 @Component({
@@ -42,10 +42,10 @@ export class AppComponent {
     reconnected: boolean = false;
     private errorState = false;
     private errorMessageTimeout: any;
-    constructor(private signalRService: SignalRService) {
-        this.$info = this.signalRService.$info;
+    constructor(private realTimeService: IRealTimeService) {
+        this.$info = this.realTimeService.$info;
         effect(() => {
-            var error = this.signalRService.$errorMessage();
+            var error = this.realTimeService.$errorMessage();
             if (error) {
                 this.errorMessage = error.message;
                 this.errorState = true;

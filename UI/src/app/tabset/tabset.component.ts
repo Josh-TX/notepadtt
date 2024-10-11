@@ -1,8 +1,9 @@
 import { Component, ViewChild, Inject, ElementRef, Signal, computed, effect } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterOutlet } from '@angular/router';
-import { SignalRService, TabContent, TabInfo } from '../services/signal-r.service';
+import { IRealTimeService, TabContent, TabInfo } from '../services/real-time.service';
 import { animate, style, transition, trigger } from '@angular/animations';
+import { IFileLoaderService } from '../services/file-loader.service';
 
 
 @Component({
@@ -50,11 +51,12 @@ export class TabsetComponent {
 
 
     constructor(
-        private signalRService: SignalRService
+        private realTimeService: IRealTimeService,
+        private fileLoaderService: IFileLoaderService
     ){
-        this.$errorState = computed(() => this.signalRService.$errorMessage()!= null);
+        this.$errorState = computed(() => this.realTimeService.$errorMessage()!= null);
         this.$tabInfos = computed(() => {
-            var tabInfos = this.signalRService.$info()!.tabInfos;
+            var tabInfos = this.realTimeService.$info()!.tabInfos;
             if (this.activeFileId){
                 if (!tabInfos.some(z => z.fileId == this.activeFileId)){
                     this.activeIndex = Math.min(this.activeIndex, tabInfos.length - 1);
@@ -66,25 +68,25 @@ export class TabsetComponent {
                 this.activeFileId = tabInfos[0].fileId;
                 //angular doesn't like triggering signals within computed
                 setTimeout(() => {
-                    this.signalRService.subscribeTabContent(this.activeFileId);
+                    this.realTimeService.subscribeTabContent(this.activeFileId);
                 })
             }
             return tabInfos;
         });
-        this.activeFileId = this.signalRService.$info()!.activeFileId;
+        this.activeFileId = this.realTimeService.$info()!.activeFileId;
         this.activeIndex = this.$tabInfos().findIndex(z => z.fileId == this.activeFileId);
         this.removeContextMenu = this.removeContextMenu.bind(this);
         if (this.activeFileId){
-            this.signalRService.subscribeTabContent(this.activeFileId);
+            this.realTimeService.subscribeTabContent(this.activeFileId);
         }
     }
 
     tabClicked(fileId: string){
         if (fileId != this.activeFileId){
             this.activeFileId = fileId;
-            this.signalRService.subscribeTabContent(this.activeFileId);
+            this.realTimeService.subscribeTabContent(this.activeFileId);
             this.activeIndex = this.$tabInfos().findIndex(z => z.fileId == fileId);
-            this.signalRService.setInfo({
+            this.realTimeService.setInfo({
                 activeFileId: this.activeFileId,
                 tabInfos: this.$tabInfos()
             });
@@ -117,7 +119,7 @@ export class TabsetComponent {
         }
         this.deletedTabIndex = tabInfos.findIndex(z => z.fileId == fileId);
         this.contextMenuFileId = undefined;
-        fetch("/api/tabs/" + fileId).then(response => response.json()).then((tabContent: TabContent) => {
+        this.fileLoaderService.load(fileId).then((tabContent: TabContent) => {
             this.deletedTabInfo = deletedTabInfo;
             this.deletedTabContent = tabContent;
             clearTimeout(this.deletedTabTimeout);
@@ -130,15 +132,15 @@ export class TabsetComponent {
             this.activeFileId = this.activeIndex >= 0
                 ? tabInfos[this.activeIndex].fileId
                 : null;
-            this.signalRService.subscribeTabContent(this.activeFileId);
-            this.signalRService.setInfo({
+            this.realTimeService.subscribeTabContent(this.activeFileId);
+            this.realTimeService.setInfo({
                 activeFileId: this.activeFileId,
                 tabInfos: tabInfos
             });
         })
     }
 
-    undo(){
+    undoDelete(){
         var tabInfos = this.$tabInfos();
         if (tabInfos.some(z => z.filename == this.deletedTabInfo!.filename)){
             var altFileName = "new " + this.getNextNewNum();
@@ -149,8 +151,8 @@ export class TabsetComponent {
         tabInfos.splice(index, 0, this.deletedTabInfo!);
         this.activeIndex = index;
         this.activeFileId = tabInfos[this.activeIndex].fileId;
-        this.signalRService.subscribeTabContent(this.activeFileId);
-        this.signalRService.setInfo({
+        this.realTimeService.subscribeTabContent(this.activeFileId);
+        this.realTimeService.setInfo({
             activeFileId: this.activeFileId,
             tabInfos: tabInfos
         });
@@ -159,7 +161,7 @@ export class TabsetComponent {
         //otherwise tabContent change won't work because the fileId isn't found
         //I know... this isn't the best way to handle race conditions
         setTimeout(() => {
-            this.signalRService.tabContentChanged(recoveredTabContent, true);
+            this.realTimeService.tabContentChanged(recoveredTabContent, true);
         }, 100);
         clearTimeout(this.deletedTabTimeout);
         this.deletedTabInfo = undefined;
@@ -183,7 +185,7 @@ export class TabsetComponent {
                 continue;
             }
             tabInfo.filename = newName;
-            this.signalRService.setInfo({
+            this.realTimeService.setInfo({
                 activeFileId: this.activeFileId,
                 tabInfos: tabInfos
             });
@@ -199,7 +201,7 @@ export class TabsetComponent {
         var tabInfos = this.$tabInfos();
         var tabInfo = tabInfos.find(z => z.fileId == this.contextMenuFileId)!;
         tabInfo.isProtected = !tabInfo.isProtected;
-        this.signalRService.setInfo({
+        this.realTimeService.setInfo({
             activeFileId: this.activeFileId,
             tabInfos: tabInfos
         });
@@ -210,7 +212,7 @@ export class TabsetComponent {
         var tabInfos = this.$tabInfos();
         var tabInfo = tabInfos.find(z => z.fileId == this.contextMenuFileId)!;
         tabInfos = [tabInfo, ...tabInfos.filter(z => z != tabInfo)];
-        this.signalRService.setInfo({
+        this.realTimeService.setInfo({
             activeFileId: this.activeFileId,
             tabInfos: tabInfos
         });
@@ -222,7 +224,7 @@ export class TabsetComponent {
         var tabInfos = this.$tabInfos();
         var originalTabInfo = tabInfos.find(z => z.fileId == originalFileId)!;
         var originalTabIndex = tabInfos.findIndex(z => z.fileId == originalFileId);
-        fetch("/api/tabs/" + originalFileId).then(response => response.json()).then((originalTabContent: TabContent) => {
+        this.fileLoaderService.load(originalFileId).then((originalTabContent: TabContent) => {
             var newTabInfo = {
                 filename: this.getDuplicateFilename(originalTabInfo.filename),
                 fileId: newFileId,
@@ -232,8 +234,8 @@ export class TabsetComponent {
             tabInfos.splice(newTabIndex, 0, newTabInfo);
             this.activeIndex = newTabIndex;
             this.activeFileId = tabInfos[this.activeIndex].fileId;
-            this.signalRService.subscribeTabContent(this.activeFileId);
-            this.signalRService.setInfo({
+            this.realTimeService.subscribeTabContent(this.activeFileId);
+            this.realTimeService.setInfo({
                 activeFileId: this.activeFileId,
                 tabInfos: tabInfos
             });
@@ -245,14 +247,14 @@ export class TabsetComponent {
             //otherwise tabContent change won't work because the fileId isn't found
             //I know... this isn't the best way to handle race conditions
             setTimeout(() => {
-                this.signalRService.tabContentChanged(newTabContent, true);
+                this.realTimeService.tabContentChanged(newTabContent, true);
             }, 100);
         })
     }
 
     download(){
         var filename = this.$tabInfos().find(z => z.fileId == this.contextMenuFileId)!.filename;
-        fetch("/api/tabs/" +  this.contextMenuFileId).then(response => response.json()).then((tabContent: TabContent) => {
+        this.fileLoaderService.load(this.contextMenuFileId!).then((tabContent: TabContent) => {
             const blob = new Blob([tabContent.text], { type: 'text/plain' });
             const link = document.createElement('a');
             link.download = filename;
@@ -274,9 +276,9 @@ export class TabsetComponent {
             isProtected: false
         });
         this.activeFileId = newFileId;
-        this.signalRService.subscribeTabContent(this.activeFileId);
+        this.realTimeService.subscribeTabContent(this.activeFileId);
         this.activeIndex = tabInfos.length - 1;
-        this.signalRService.setInfo({
+        this.realTimeService.setInfo({
             activeFileId: newFileId,
             tabInfos: tabInfos
         });

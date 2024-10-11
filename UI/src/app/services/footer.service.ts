@@ -13,6 +13,7 @@ export type FooterData = {
 @Injectable({
     providedIn: 'root',
 })
+//this service merely facilitates communication between the tabset component and the footer component
 export class FooterService {
  
     private _undoHandler: (() => any) | null = null;

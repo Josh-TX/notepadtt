@@ -17,7 +17,7 @@ import {
 import {
     oneLight
 } from './light-theme';
-import { SignalRService } from '../services/signal-r.service';
+import { IRealTimeService } from '../services/real-time.service';
 import { FooterService } from '../services/footer.service';
 import { undo, redo, history, historyField, defaultKeymap, historyKeymap, } from "@codemirror/commands";
 
@@ -40,13 +40,13 @@ export class EditorComponent {
     @ViewChild('myeditor') myEditor: any;
     constructor(
         @Inject(DOCUMENT) private document: Document, 
-        private signalR: SignalRService,
+        private realTimeService: IRealTimeService,
         private footerService: FooterService
         ) 
     { 
         effect(() => {
             //this angular effect runs each time this.signalR.$tabContent() changes
-            var tabContent = this.signalR.$tabContent();
+            var tabContent = this.realTimeService.$tabContent();
             if (tabContent){
                 if (this.view && tabContent.fileId == this.lastFileId){
                     var oldText = this.view.state.doc.toString();
@@ -178,10 +178,10 @@ export class EditorComponent {
             EditorView.updateListener.of(update  => {
                 if (update.docChanged && !this.dispatching) {
                     var text = update.state.doc.toString();
-                    var tabContent = this.signalR.$tabContent();
+                    var tabContent = this.realTimeService.$tabContent();
                     if (tabContent){
                         var fileId = tabContent.fileId;
-                        this.signalR.tabContentChanged({fileId: fileId, text: text});
+                        this.realTimeService.tabContentChanged({fileId: fileId, text: text});
 
                         var historyState = <{done: any[], undone: any[]}>this.view!.state.field(historyField);
                         //for some reason, the done stack will have 1 extra item that's inserted upon focusing in the editor. 

@@ -3,6 +3,20 @@ import { Injectable, NgZone, Signal, WritableSignal, signal } from '@angular/cor
 import * as signalR from '@microsoft/signalr';
 //namespace signalR { export type HubConnection = any;}
 
+@Injectable({
+    providedIn: 'root',
+})
+export abstract class IRealTimeService {
+    abstract $info: WritableSignal<Info | null>;
+    abstract $tabContent: WritableSignal<TabContent | null>;
+    abstract $errorMessage: WritableSignal<{message: string} | null>;
+
+    
+    abstract setInfo(info: Info): void
+    abstract subscribeTabContent(fileId: string | null): void
+    abstract tabContentChanged(tabContent: TabContent, updateSignal?: boolean): void
+}
+
 export type TabInfo = {
     filename: string,
     fileId: string,
@@ -28,16 +42,14 @@ export type FullInfo = {
 @Injectable({
     providedIn: 'root',
 })
-export class SignalRService {
+export class SignalRRealTimeService implements IRealTimeService {
 
     $info: WritableSignal<Info | null>;
-
     $tabContent: WritableSignal<TabContent | null>;
     $errorMessage: WritableSignal<{message: string} | null>;
+
     private fileId: string | null = null;
-
     private connection: signalR.HubConnection;
-
     private actualSub: string | null = null;
     private desiredSub: string | null = null;
     private infoToUpdate: Info | null = null;
@@ -45,8 +57,10 @@ export class SignalRService {
     private changeToken: string | null = null;
 
     constructor(
+        //signalR messages are received outside of the NgZone
         private zone: NgZone
     ){
+        console.log("SignalRRealTimeService");
         this.$info = signal(null);
         this.$errorMessage = signal(null);
         this.$tabContent = signal(null);
@@ -136,5 +150,99 @@ export class SignalRService {
             this.connection.invoke("SubscribeTabContent", this.desiredSub).catch((e) => this.$errorMessage.set({message: "error synchronizing with server"}));
         }
         this.actualSub = this.desiredSub;
+    }
+}
+
+
+
+export class MockRealTimeService implements IRealTimeService {
+    oldInfo: Info;
+    $info: WritableSignal<Info>;
+    $tabContent: WritableSignal<TabContent | null>;
+    $errorMessage: WritableSignal<{ message: string; } | null>;
+
+    constructor(){
+        console.log("MockRealTimeService");
+        var info: Info = localStorage["notepadtt_info_json"] ? JSON.parse(localStorage["notepadtt_info_json"]) : this.getDefaultInfo();
+        this.$info = signal(info);
+        this.oldInfo = JSON.parse(JSON.stringify(info));
+        var activeTabInfo = info.tabInfos.find(z => z.fileId == info.activeFileId);
+        var tabContent: TabContent | null = null;
+        if (activeTabInfo){
+            var tabContentStr = localStorage["notepadtt:" + activeTabInfo.filename];
+            if (tabContentStr != null){
+                tabContent = {
+                    fileId: activeTabInfo.fileId,
+                    text: tabContentStr
+                }
+            }
+        }
+        this.$errorMessage = signal(null);
+        this.$tabContent = signal(tabContent);
+    }
+
+    setInfo(info: Info): void {
+        for (var oldTabInfo of this.oldInfo.tabInfos){
+            var foundNewInfo =  info.tabInfos.find(z => z.fileId == oldTabInfo.fileId);
+            if (foundNewInfo == null){
+                delete localStorage["notepadtt:" + oldTabInfo.filename];
+            } else {
+                if (foundNewInfo.filename != oldTabInfo.filename){
+                    localStorage["notepadtt:" + foundNewInfo.filename] = localStorage["notepadtt:" + oldTabInfo.filename];
+                    delete localStorage["notepadtt:" + oldTabInfo.filename];
+                }
+            }
+        }
+        this.$info.set(info);
+        this.oldInfo = JSON.parse(JSON.stringify(info));
+        localStorage["notepadtt_info_json"] = JSON.stringify(info);
+    }
+
+    subscribeTabContent(fileId: string | null): void {
+        var tabInfo = this.$info().tabInfos.find(z => z.fileId == fileId);
+        if (tabInfo){
+            var tabContentStr = localStorage["notepadtt:" + tabInfo.filename] || "\n\n\n\n";
+            this.$tabContent.set({
+                fileId: tabInfo.fileId,
+                text: tabContentStr
+            });
+        } else {
+            this.$tabContent.set(null);
+        }
+
+    }
+    
+    tabContentChanged(tabContent: TabContent, updateSignal?: boolean): void {
+        var tabInfo = this.$info().tabInfos.find(z => z.fileId == tabContent.fileId);
+        if (tabInfo){
+            localStorage["notepadtt:" + tabInfo.filename] = tabContent.text;
+        }
+        if (updateSignal){
+            this.$tabContent.set(tabContent);
+        }
+    }
+
+    private getDefaultInfo(): Info{
+        var fileId = this.randomGuid();
+        var info: Info = { 
+            activeFileId: fileId,
+            tabInfos: [
+                {
+                    fileId: fileId,
+                    filename: "new 1",
+                    isProtected: false,
+                }
+            ]
+        }
+        localStorage["notepadtt_info_json"] = JSON.stringify(info);
+        localStorage["notepadtt:new 1"] = "This is a demo of notepadtt, but hosted on github pages instead of self-hosted via docker.\n\nThis demo site will write to localStorage, whereas normally the app would real-time sync with the server\n\nmore info at https://github.com/Josh-TX/notepadtt"
+        return info;
+    }
+    
+    private randomGuid(): string {
+        //copied from stackOverflow
+        return "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (c: any) =>
+            (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+        );
     }
 }

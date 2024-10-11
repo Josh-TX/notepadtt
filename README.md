@@ -1,6 +1,6 @@
 # Notepadtt
 
-A simple notepad app similar to notepad++. Notes are auto-saved and synchronized in real time. Written in .NET and Angular, and heavily utilizes SignalR. 
+A simple notepad app inspired by notepad++. Notes are auto-saved and synchronized in real time. Written in .NET and Angular, and heavily utilizes SignalR. 
 
 <p align="center">
   <br>
@@ -31,7 +31,7 @@ here's a full list of supported environmental variables
 | INCLUDE_FILES | when mounting a filesystem path to `/data`, this is a glob pattern for whitelisting what files show up |
 | EXCLUDE_FILES | when mounting a filesystem path to `/data`, this is a glob pattern for blacklisting what files show up. Has higher precedence than the whitelist |
 
-You'll need to specify the environmental variable in the docker run command. For example, this sets the title to "temp notes"
+You'll need to specify the environmental variable in the docker run command. For example, this sets the website's title to "temp notes"
 
 ```
 docker run -p 8080:8080 -e "TITLE=temp notes" joshtxdev/notepadtt
