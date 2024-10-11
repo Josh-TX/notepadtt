@@ -28,7 +28,7 @@ There are additional configurations available via environmental variables:
 | Environmental Variable | effect |
 | -------- | ------- |
 | TITLE |  sets the HTML's `<title>`, giving the browser tab an alternate title. |
-| MAXKB | changes the maximum file size allowed (default 200). When mounting a filesystem path to `/data`, file |
+| MAXKB | changes the maximum file size allowed (default 200). When mounting a filesystem path to `/data`, files exceeding this size are excluded |
 | INCLUDE_FILES | when mounting a filesystem path to `/data`, this is a glob pattern for whitelisting what files show up |
 | EXCLUDE_FILES | when mounting a filesystem path to `/data`, this is a glob pattern for blacklisting what files show up. Has higher precedence than the whitelist |
 
