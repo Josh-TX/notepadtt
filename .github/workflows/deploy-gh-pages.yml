@@ -24,9 +24,11 @@ jobs:
 
     - name: Install dependencies
       run: npm install
+      working-directory: UI
 
     - name: Build
       run: npm run build-pages
+      working-directory: UI
 
     - name: Setup Pages
       uses: actions/configure-pages@v4
