@@ -1,6 +1,8 @@
 # Notepadtt
 
-A simple notepad app inspired by notepad++. Notes are auto-saved and synchronized in real time. Written in .NET and Angular, and heavily utilizes SignalR. A live demo is available at https://josh-tx.github.io/notepadtt/, though the demo uses localStorage rather than synchronizing with a server. 
+A simple notepad app inspired by notepad++. Notes are auto-saved and synchronized in real time. Written in .NET and Angular, and heavily utilizes SignalR. 
+
+A live demo is available at https://josh-tx.github.io/notepadtt/, though the demo uses localStorage rather than synchronizing with a server. 
 
 <p align="center">
   <br>
@@ -22,9 +24,8 @@ docker run -p 8080:8080 -v notepadVolume:/data joshtxdev/notepadtt
 ```
 if mounting a filesystem path, make sure you have correct file permissions set up. One way to fix permissions is by adding a -u argument (such as `-u $(id -u):$(id -g)`), though this doesn't work with rootless containers. 
 
-here's a full list of supported environmental variables
-
-| variable name | effect |
+There are a some additional configurations available via environmental variables:
+| Environmental Variable | effect |
 | -------- | ------- |
 | TITLE |  sets the HTML's `<title>`, giving the browser tab an alternate title. |
 | MAXKB | changes the maximum file size allowed (default 200). When mounting a filesystem path to `/data`, file |
