@@ -24,7 +24,7 @@ docker run -p 8080:8080 -v notepadVolume:/data joshtxdev/notepadtt
 ```
 if mounting a filesystem path, make sure you have correct file permissions set up. One way to fix permissions is by adding a -u argument (such as `-u $(id -u):$(id -g)`), though this doesn't work with rootless containers. 
 
-There are a some additional configurations available via environmental variables:
+There are additional configurations available via environmental variables:
 | Environmental Variable | effect |
 | -------- | ------- |
 | TITLE |  sets the HTML's `<title>`, giving the browser tab an alternate title. |
