@@ -1,6 +1,6 @@
 # Notepadtt
 
-A simple notepad app inspired by notepad++. Notes are auto-saved and synchronized in real time. Written in .NET and Angular, and heavily utilizes SignalR. 
+A simple notepad app inspired by notepad++. Notes are auto-saved and synchronized in real time. Written in .NET and Angular, and heavily utilizes SignalR. A live demo is available at https://josh-tx.github.io/notepadtt/, though the demo uses localStorage rather than synchronizing with a server. 
 
 <p align="center">
   <br>

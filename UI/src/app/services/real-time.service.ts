@@ -60,7 +60,6 @@ export class SignalRRealTimeService implements IRealTimeService {
         //signalR messages are received outside of the NgZone
         private zone: NgZone
     ){
-        console.log("SignalRRealTimeService");
         this.$info = signal(null);
         this.$errorMessage = signal(null);
         this.$tabContent = signal(null);
@@ -162,7 +161,6 @@ export class MockRealTimeService implements IRealTimeService {
     $errorMessage: WritableSignal<{ message: string; } | null>;
 
     constructor(){
-        console.log("MockRealTimeService");
         var info: Info = localStorage["notepadtt_info_json"] ? JSON.parse(localStorage["notepadtt_info_json"]) : this.getDefaultInfo();
         this.$info = signal(info);
         this.oldInfo = JSON.parse(JSON.stringify(info));
