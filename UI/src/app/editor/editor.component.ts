@@ -10,6 +10,7 @@ import { EditorView, lineNumbers, highlightActiveLineGutter,
     keymap,
 } from '@codemirror/view';
 import { markdown } from '@codemirror/lang-markdown';
+import { search, searchKeymap } from '@codemirror/search';
 import { DOCUMENT } from '@angular/common';
 import {
     oneDark
@@ -168,10 +169,14 @@ export class EditorComponent {
             keymap.of([
                 ...defaultKeymap,
                 ...historyKeymap,
+                ...searchKeymap
             ]),
             lineNumbers(),
             highlightActiveLineGutter(),
             highlightActiveLine(),
+            search({
+                top: true
+            }),
             theme,
             markdown(),
             this.wordWrapCompartment.of(wordWrapExt),

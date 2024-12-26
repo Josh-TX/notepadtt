@@ -96,3 +96,12 @@ h1,h2,h3,h4,p {
     cursor: pointer;
     padding: 8px 16px;
 }
+
+
+.cm-search{
+    button[name=close]{
+        color: var(--text-main);
+        padding: 4px 8px !important;
+        font-size: 20px !important;
+    }
+}
