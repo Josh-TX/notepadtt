@@ -25,7 +25,7 @@ public class InfoStateService
         }
         _maxkb = int.TryParse(Environment.GetEnvironmentVariable("MAXKB"), out var n) ? n : 200; //default to 200kb
     }
-
+     
     public Info GetInfo()
     {
         if (_info != null)
@@ -336,7 +336,7 @@ public class InfoStateService
         else if (tabInfos.Any())
         {
             _info.ActiveFileId = tabInfos.Last().FileId;
-        } else
+        } else 
         {
             _info.ActiveFileId = null;
         }
@@ -374,6 +374,10 @@ public class InfoStateService
             return false;
         }
         var fileInfo = new System.IO.FileInfo(Path.Combine(Constants.DATA_BASEPATH, filename));
+        if (!fileInfo.Exists)
+        {
+            return false;
+        }
         double kb = fileInfo.Length / 1024d;
         if (kb > _maxkb)
         {
