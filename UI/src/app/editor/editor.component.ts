@@ -1,16 +1,16 @@
 import { Component, ViewChild, Inject, effect } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterOutlet } from '@angular/router';
-import { minimalSetup } from "codemirror";
-import { Compartment, EditorState, Extension, StateEffect } from '@codemirror/state';
-import { EditorView, lineNumbers, highlightActiveLineGutter, 
+import { Compartment, EditorState, Extension, StateEffect, StateEffectType, StateField } from '@codemirror/state';
+import {
+    EditorView, lineNumbers, highlightActiveLineGutter,
     highlightActiveLine,
     highlightSpecialChars,
     drawSelection,
     keymap,
+    Decoration,
 } from '@codemirror/view';
 import { markdown } from '@codemirror/lang-markdown';
-import { search, searchKeymap } from '@codemirror/search';
 import { DOCUMENT } from '@angular/common';
 import {
     oneDark
@@ -21,6 +21,8 @@ import {
 import { IRealTimeService } from '../services/real-time.service';
 import { FooterService } from '../services/footer.service';
 import { undo, redo, history, historyField, defaultKeymap, historyKeymap, } from "@codemirror/commands";
+
+type HighlightRange = { from: number, to: number };
 
 @Component({
     selector: 'editor',
@@ -38,32 +40,35 @@ export class EditorComponent {
     private wordWrap: boolean = false;
     private lastFileId: string | undefined;
 
+    private softHighlightEffect: StateEffectType<HighlightRange> = StateEffect.define();
+    private strongHighlightEffect: StateEffectType<HighlightRange> = StateEffect.define();
+    private removeHighlightsEffect: StateEffectType<any> = StateEffect.define();
+
     @ViewChild('myeditor') myEditor: any;
     constructor(
-        @Inject(DOCUMENT) private document: Document, 
+        @Inject(DOCUMENT) private document: Document,
         private realTimeService: IRealTimeService,
         private footerService: FooterService
-        ) 
-    { 
+    ) {
         effect(() => {
             //this angular effect runs each time this.signalR.$tabContent() changes
             var tabContent = this.realTimeService.$tabContent();
-            if (tabContent){
-                if (this.view && tabContent.fileId == this.lastFileId){
+            if (tabContent) {
+                if (this.view && tabContent.fileId == this.lastFileId) {
                     var oldText = this.view.state.doc.toString();
                     var newText = tabContent.text;
-                    if (oldText == newText){
+                    if (oldText == newText) {
                         return;
                     }
                     //We only want to replace what changed, since that's less disruptive of the cursor position
                     var startMatch = getMatchLength(oldText, newText);
                     var endMatch = getMatchLength(reverseString(oldText), reverseString(newText));
                     this.dispatching = true;
-                    if (startMatch + endMatch <= oldText.length){
+                    if (startMatch + endMatch <= oldText.length) {
                         this.view.dispatch({
                             changes: {
-                                from: startMatch, 
-                                to: oldText.length - endMatch, 
+                                from: startMatch,
+                                to: oldText.length - endMatch,
                                 insert: newText.slice(startMatch, newText.length - endMatch)
                             }
                         });
@@ -72,7 +77,7 @@ export class EditorComponent {
                         //^that'd match 3 at the start and 1 at the end, despite oldText having a length of just 3
                         //in this case, we keep the common start part, and replace everything after with newText
                         this.view.dispatch({
-                            changes: {from: startMatch, to: oldText.length, insert: newText.slice(startMatch)}
+                            changes: { from: startMatch, to: oldText.length, insert: newText.slice(startMatch) }
                         });
                     }
                     this.dispatching = false;
@@ -84,12 +89,24 @@ export class EditorComponent {
                     this.lastFileId = tabContent.fileId;
                     this.renderText(tabContent.text);
                 }
-            } 
+            }
         }, { allowSignalWrites: true });
         effect(() => {
             this.wordWrap = this.footerService.$wordWrap();
             this.updateWordWrap();
         }, { allowSignalWrites: true });
+        effect(() => {
+            if (!this.view) {
+                return;
+            }
+            this.footerService.$isFindActive();
+            this.footerService.$findText();
+            this.footerService.$findIndex();
+            setTimeout(() => { //needed so that the effect isn't reactive to the tabContent signal
+                this.updateHighlights();
+            })
+        }, { allowSignalWrites: true });
+
         this.footerService.registerUndoHandler(() => {
             undo(this.view!);
         });
@@ -98,8 +115,8 @@ export class EditorComponent {
         });
     }
 
-    private updateWordWrap(){
-        if (this.view){
+    private updateWordWrap() {
+        if (this.view) {
             this.view.dispatch({
                 effects: [this.wordWrapCompartment.reconfigure(
                     this.wordWrap ? EditorView.lineWrapping : []
@@ -109,7 +126,7 @@ export class EditorComponent {
     }
 
     private clearUndoHistory() {
-        if (this.view){
+        if (this.view) {
             this.view.dispatch({
                 effects: this.historyCompartment.reconfigure([]) //first remove history() to clear it!!
             });
@@ -120,16 +137,16 @@ export class EditorComponent {
         }
     }
 
-    ngAfterViewInit(){
+    ngAfterViewInit() {
         this.init = true;
     }
-    
-    renderText(text: string){
-        if (!this.init){
+
+    renderText(text: string) {
+        if (!this.init) {
             setTimeout(() => this.renderText(text));
             return;
         }
-        if (this.view){
+        if (this.view) {
             let newState = EditorState.create({
                 doc: text,
                 extensions: this.getExtension(),
@@ -159,42 +176,83 @@ export class EditorComponent {
             theme = oneDark;
         }
         var wordWrapExt: Extension[] = [];
-        if (this.wordWrap){
+        if (this.wordWrap) {
             wordWrapExt.push(EditorView.lineWrapping);
         }
+        var vm = this;
+        var highlightField = StateField.define({
+            create() {
+                return Decoration.none;
+            },
+            update(highlights, tr) {
+                highlights = highlights.map(tr.changes);
+                for (let e of tr.effects) {
+                    if (e.is(vm.softHighlightEffect)) {
+                        const decoration = Decoration.mark({
+                            class: 'cm-soft-highlight'
+                        });
+                        highlights = highlights.update({
+                            add: [decoration.range(e.value.from, e.value.to)]
+                        });
+                    } else if (e.is(vm.strongHighlightEffect)) {
+                        const decoration = Decoration.mark({
+                            class: 'cm-strong-highlight'
+                        });
+                        // Remove any existing soft highlight at this position
+                        highlights = highlights.update({
+                            filter: (from, to) => !(from === e.value.from && to === e.value.to),
+                            add: [decoration.range(e.value.from, e.value.to)]
+                        });
+                    } else if (e.is(vm.removeHighlightsEffect)) {
+                        highlights = Decoration.none;
+                    }
+                }
+                return highlights;
+            },
+            provide: f => EditorView.decorations.from(f)
+        });
+
+
         var extension: Extension[] = [
             highlightSpecialChars(),
             this.historyCompartment.of(history()),
             drawSelection(),
             keymap.of([
                 ...defaultKeymap,
-                ...historyKeymap,
-                ...searchKeymap
+                ...historyKeymap
             ]),
             lineNumbers(),
             highlightActiveLineGutter(),
             highlightActiveLine(),
-            search({
-                top: true
-            }),
             theme,
+            highlightField,
             markdown(),
             this.wordWrapCompartment.of(wordWrapExt),
-            EditorView.updateListener.of(update  => {
+            EditorView.theme({
+                '.cm-soft-highlight': {
+                    backgroundColor: '#ffeb3b80', // Light yellow
+                    borderRadius: '2px'
+                },
+                '.cm-strong-highlight': {
+                    backgroundColor: '#ff990080', // Orange
+                    borderRadius: '2px'
+                }
+            }),
+            EditorView.updateListener.of(update => {
                 if (update.docChanged && !this.dispatching) {
                     var text = update.state.doc.toString();
                     var tabContent = this.realTimeService.$tabContent();
-                    if (tabContent){
+                    if (tabContent) {
                         var fileId = tabContent.fileId;
-                        this.realTimeService.tabContentChanged({fileId: fileId, text: text});
+                        this.realTimeService.tabContentChanged({ fileId: fileId, text: text });
 
-                        var historyState = <{done: any[], undone: any[]}>this.view!.state.field(historyField);
+                        var historyState = <{ done: any[], undone: any[] }>this.view!.state.field(historyField);
                         //for some reason, the done stack will have 1 extra item that's inserted upon focusing in the editor. 
                         this.footerService.$canUndo.set(historyState.done.length > 1);
                         this.footerService.$canRedo.set(historyState.undone.length > 0);
                     }
                 }
-                if (update.changes){
+                if (update.changes) {
                     this.updateFooter();
                 }
             })
@@ -202,8 +260,8 @@ export class EditorComponent {
         return extension
     }
 
-    private updateFooter(){
-        if (!this.view){
+    private updateFooter() {
+        if (!this.view) {
             return;
         }
         var state = this.view.state;
@@ -217,10 +275,70 @@ export class EditorComponent {
             col: 1 + selection.to - toLine.from,
             pos: selection.to,
             selectedLength: selection.to > selection.from ? selection.to - selection.from : undefined,
-            selectedLines: selection.to > selection.from 
+            selectedLines: selection.to > selection.from
                 ? 1 + toLine.number - doc.lineAt(selection.from).number
                 : undefined,
         })
+    }
+
+    private updateHighlights() {
+        this.clearHighlights();
+        var findText = this.footerService.$findText().toLowerCase()
+        if (!this.footerService.$isFindActive() || !findText){
+            this.footerService.updateFindMatchCount(0);
+            this.footerService.updateFindIndex(0);
+            return;
+        }
+        var tabText = this.view?.state.doc.toString();
+        if (!tabText) {
+            return;
+        }
+        console.log("made it past returns", tabText)
+        var pos = 0;
+        var matches: Array<HighlightRange> = [];
+        while (true) {
+            const index = tabText.indexOf(findText, pos);
+            if (index === -1) break;
+            matches.push({
+                from: index,
+                to: index + findText.length
+            });
+            pos = index + 1;
+        }
+        var findIndex = this.footerService.$findIndex();
+        if (matches.length == 0){
+            findIndex = 0;
+        } else if (findIndex >= matches.length) {
+            findIndex = matches.length - 1;
+        }
+        this.footerService.updateFindIndex(findIndex);
+        this.footerService.updateFindMatchCount(matches.length);
+        matches.forEach((match, i) => {
+            if (findIndex == i) {
+                this.addStrongHighlight(match);
+                this.view!.dispatch({
+                    effects: EditorView.scrollIntoView(match.from, { y: 'center' })
+                });
+            } else {
+                this.addSoftHighlight(match);
+            }
+        })
+    }
+
+    private addSoftHighlight(range: HighlightRange) {
+        this.view!.dispatch({
+            effects: this.softHighlightEffect.of(range)
+        });
+    }
+    private addStrongHighlight(range: HighlightRange) {
+        this.view!.dispatch({
+            effects: this.strongHighlightEffect.of(range)
+        });
+    }
+    private clearHighlights() {
+        this.view!.dispatch({
+            effects: this.removeHighlightsEffect.of(null)
+        });
     }
 }
 
@@ -230,11 +348,11 @@ function reverseString(str: string) {
 
 function getMatchLength(str1: string, str2: string): number {
     var i = 0;
-    while (true){
-        if (i >= str1.length || i >= str2.length){
+    while (true) {
+        if (i >= str1.length || i >= str2.length) {
             return i;
         }
-        if (str1[i] != str2[i]){
+        if (str1[i] != str2[i]) {
             return i;
         }
         i++;

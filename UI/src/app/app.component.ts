@@ -6,6 +6,7 @@ import { EditorComponent } from './editor/editor.component';
 import { FooterComponent } from './footer/footer.component';
 import { IRealTimeService, Info } from './services/real-time.service';
 import { animate, style, transition, trigger } from '@angular/animations';
+import { FooterService } from './services/footer.service';
 
 @Component({
     selector: 'app-root',
@@ -38,12 +39,14 @@ import { animate, style, transition, trigger } from '@angular/animations';
 })
 export class AppComponent {
     $info: Signal<Info | null>;
+    $isFindActive: Signal<boolean>;
     errorMessage: string | undefined;
     reconnected: boolean = false;
     private errorState = false;
     private errorMessageTimeout: any;
-    constructor(private realTimeService: IRealTimeService) {
+    constructor(private realTimeService: IRealTimeService, private footerService: FooterService) {
         this.$info = this.realTimeService.$info;
+        this.$isFindActive = this.footerService.$isFindActive;
         effect(() => {
             var error = this.realTimeService.$errorMessage();
             if (error) {
@@ -60,6 +63,15 @@ export class AppComponent {
                 setTimeout(() => {
                     this.reconnected = false;
                 }, 3500);
+            }
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+                this.footerService.updateFindActive(true);
+                e.preventDefault();
+            } else if (e.key.toLowerCase() == "escape") {
+                this.footerService.updateFindActive(false);
             }
         });
     }

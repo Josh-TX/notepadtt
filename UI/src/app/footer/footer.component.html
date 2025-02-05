@@ -1,4 +1,20 @@
+<div style="position: relative;">
+    <div *ngIf="$isFindActive()" class="find-container">
+        <input id="find-input" placeholder="find" [(ngModel)]="searchTextBinding" (ngModelChange)="updateFindText($event)" autocomplete="off" (keydown)="findKeyDown($event)">
+        <div class="icon-container" style="margin-left: 4px;" (click)="findPrev()">
+            <div class="up-icon">&#10095;</div>
+        </div>
+        <div class="icon-container" style="margin-left: 2px;" (click)="findNext()">
+            <div class="down-icon">&#10094;</div>
+        </div>
+        <div class="find-ratio">{{ $findPos() }}<span style="margin: 0 3px;">/</span>{{ $findMatchCount() }}</div>
+        <div class="icon-container" style="margin-left: 2px; padding: 4px 5px 3px 5px;" (click)="stopFind()">
+            <span class="icon">&times;</span>
+        </div>
+    </div>
+</div>
 <div class="footer">
+    <div class="footer-button" (click)="toggleFindActive()">find</div>
     <div class="footer-button" (click)="undo()" [class.disabled]="!$canUndo()">undo</div>
     <div class="footer-button" (click)="redo()" [class.disabled]="!$canRedo()">redo</div>
     <div class="footer-button" (click)="toggleWordWrap()">

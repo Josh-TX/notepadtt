@@ -3,7 +3,7 @@
 @if ($info()){
     <tabset></tabset>
     @if($info()!.tabInfos.length){
-        <div style="flex: 1; overflow: auto;">
+        <div style="flex: 1; overflow: auto;" [style.padding-bottom]="$isFindActive() ? '30px' : 0">
             <editor></editor>
         </div>
         <footer></footer>

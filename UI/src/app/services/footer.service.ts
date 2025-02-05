@@ -22,6 +22,12 @@ export class FooterService {
     $canUndo: WritableSignal<boolean>;
     $canRedo: WritableSignal<boolean>;
     $footerData: WritableSignal<FooterData>;
+
+    $findText: WritableSignal<string>;
+    $findIndex: WritableSignal<number>;
+    $findMatchCount: WritableSignal<number>;
+    $isFindActive: WritableSignal<boolean>;
+
     constructor(
     ){
         var wordWrap = localStorage["word-wrap"] === "true"
@@ -29,6 +35,11 @@ export class FooterService {
         this.$canUndo = signal(false);
         this.$canRedo = signal(false);
         this.$footerData = signal({});
+
+        this.$findText = signal("");
+        this.$findIndex = signal(0);
+        this.$findMatchCount = signal(0);
+        this.$isFindActive = signal(false);
     }
 
     registerUndoHandler(handler: () => any){
@@ -55,5 +66,32 @@ export class FooterService {
         var newWordWrap = !this.$wordWrap();
         localStorage["word-wrap"] = newWordWrap.toString();
         this.$wordWrap.set(newWordWrap);
+    }
+
+    updateFindActive(isFindActive: boolean){
+        this.$isFindActive.set(isFindActive);
+        if (isFindActive){
+            setTimeout(() => {
+                var el = <HTMLInputElement>document.getElementById("find-input");
+                if (el){
+                    el.focus();
+                    el.select();
+                } else {
+                    alert("fail")
+                }
+            });
+        }
+    }
+
+    updateFindText(findText: string){
+        this.$findText.set(findText);
+    }
+
+    updateFindMatchCount(matchCount: number){
+        this.$findMatchCount.set(matchCount);
+    }
+
+    updateFindIndex(index: number){
+        this.$findIndex.set(index);
     }
 }
