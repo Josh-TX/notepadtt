@@ -88,6 +88,7 @@ export class EditorComponent {
                 } else {
                     this.lastFileId = tabContent.fileId;
                     this.renderText(tabContent.text);
+                    this.updateHighlights();
                 }
             }
         }, { allowSignalWrites: true });
@@ -96,13 +97,13 @@ export class EditorComponent {
             this.updateWordWrap();
         }, { allowSignalWrites: true });
         effect(() => {
-            if (!this.view) {
-                return;
-            }
             this.footerService.$isFindActive();
             this.footerService.$findText();
             this.footerService.$findIndex();
-            setTimeout(() => { //needed so that the effect isn't reactive to the tabContent signal
+            if (!this.view) {
+                return;
+            }
+          setTimeout(() => { //needed so that the effect isn't reactive to other signals referenced within updateHighlights()
                 this.updateHighlights();
             })
         }, { allowSignalWrites: true });
@@ -289,11 +290,10 @@ export class EditorComponent {
             this.footerService.updateFindIndex(0);
             return;
         }
-        var tabText = this.view?.state.doc.toString();
+        var tabText = this.view?.state.doc.toString().toLowerCase();
         if (!tabText) {
             return;
         }
-        console.log("made it past returns", tabText)
         var pos = 0;
         var matches: Array<HighlightRange> = [];
         while (true) {

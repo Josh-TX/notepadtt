@@ -25,7 +25,7 @@ public class SignalRHub : Hub
         var broadcastAll = false;
         try
         {
-            //since this function is called on refresh, we want to verify that Info accurately matches disk contents
+            //since this function is called on a browser refresh, we want to verify that Info accurately matches disk contents
             broadcastAll = _infoStateService.UpdateInfoToMatchDisk();
             info = _infoStateService.GetInfo();
         }

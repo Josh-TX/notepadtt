@@ -163,6 +163,11 @@ public class InfoStateService
         {
             throw new ArgumentException("Stale ChangeToken");
         }
+        newInfo.ChangeToken = Guid.NewGuid();
+        _info = newInfo;
+        //it's important to update the _info now rather than after the filesystem changes that happen later in this function
+        //This is because the filesystem changes will trigger the FileWatchService event listeners, and that code could run prior to _info being updated
+        //NotifyFileCreated() and NotifyFileDeleted() will look at the _info to make inferences about what happened, hence we need _info updated now. 
         var tabsToDelete = existingInfo.TabInfos.Where(z => !newInfo.TabInfos.Any(zz => zz.FileId == z.FileId));
         foreach (var tabToDelete in tabsToDelete)
         {
@@ -202,8 +207,6 @@ public class InfoStateService
                 }
             }
         }
-        newInfo.ChangeToken = Guid.NewGuid();
-        _info = newInfo;
         SaveMetadataToDisk(newInfo);
     }
 
