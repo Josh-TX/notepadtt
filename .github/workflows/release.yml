@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build frontend
+        run: npm ci && npm run build
+        working-directory: frontend
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build binaries
+        run: |
+          LDFLAGS="-s -w"
+          mkdir -p dist
+          declare -A targets=(
+            ["linux-amd64"]="linux/amd64"
+            ["linux-arm64"]="linux/arm64"
+            ["windows-amd64"]="windows/amd64"
+            ["darwin-amd64"]="darwin/amd64"
+            ["darwin-arm64"]="darwin/arm64"
+          )
+          for name in "${!targets[@]}"; do
+            IFS='/' read -r OS ARCH <<< "${targets[$name]}"
+            OUT="dist/notepadtt-${name}"
+            [ "$OS" = "windows" ] && OUT="${OUT}.exe"
+            CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build \
+              -trimpath \
+              -ldflags="$LDFLAGS" \
+              -o "$OUT" .
+          done
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*

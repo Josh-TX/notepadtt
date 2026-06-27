@@ -1,0 +1,583 @@
+package backend
+
+import (
+	"database/sql"
+	"fmt"
+	"io/fs"
+	"log"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+var allowedExtensions = map[string]bool{
+	".txt": true, ".md": true, ".json": true, ".yaml": true, ".sh": true,
+}
+
+var newNPattern = regexp.MustCompile(`^new \d+$`)
+
+type DBFile struct {
+	FileId     string
+	Path       string
+	Content    string
+	LastOpened int64 // unix millis, 0 = never
+	OrderNum   int
+	VersionId  string
+}
+
+type DB struct {
+	sql  *sql.DB
+	root string
+	fts  ftsSyncState
+}
+
+func NewDB(root string) (*DB, error) {
+	dbPath := filepath.Join(root, ".notepadtt.db")
+	sqldb, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, err
+	}
+	sqldb.SetMaxOpenConns(1)
+
+	_, err = sqldb.Exec(`CREATE TABLE IF NOT EXISTS files (
+		Id INTEGER PRIMARY KEY AUTOINCREMENT,
+		FileId TEXT UNIQUE,
+		Path TEXT UNIQUE,
+		Content TEXT,
+		LastOpened INTEGER,
+		ContentUpdated INTEGER,
+		OrderNum INTEGER,
+		VersionId TEXT
+	)`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = sqldb.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
+		Path,
+		Content,
+		content='files',
+		content_rowid='Id',
+		tokenize='trigram'
+	)`)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := createFileVersionsSchema(sqldb); err != nil {
+		return nil, err
+	}
+
+	if err := createFileTrashSchema(sqldb); err != nil {
+		return nil, err
+	}
+
+	if err := createSettingsSchema(sqldb); err != nil {
+		return nil, err
+	}
+
+	db := &DB{sql: sqldb, root: root, fts: ftsSyncState{cache: map[string]ftsCacheEntry{}}}
+	if err := db.startupScan(); err != nil {
+		return nil, err
+	}
+	if err := db.seedFtsCache(); err != nil {
+		return nil, err
+	}
+	settings, err := db.GetSettings()
+	if err != nil {
+		return nil, err
+	}
+	if err := setSettingsCache(settings); err != nil {
+		return nil, err
+	}
+	return db, nil
+}
+
+func (d *DB) IsAllowedPath(relPath string) bool {
+	name := filepath.Base(relPath)
+	if newNPattern.MatchString(name) {
+		return true
+	}
+	return allowedExtensions[filepath.Ext(name)]
+}
+
+func (d *DB) IsTracked(relPath string) bool {
+	var count int
+	d.sql.QueryRow(`SELECT COUNT(*) FROM files WHERE Path = ?`, relPath).Scan(&count)
+	return count > 0
+}
+
+func (d *DB) startupScan() error {
+	// load existing DB records
+	rows, err := d.sql.Query(`SELECT FileId, Path, Content, ContentUpdated, VersionId FROM files`)
+	if err != nil {
+		return err
+	}
+	type dbRec struct {
+		fileId         string
+		content        string
+		contentUpdated int64
+		versionId      string
+	}
+	dbByPath := map[string]dbRec{}
+	for rows.Next() {
+		var r dbRec
+		var path string
+		rows.Scan(&r.fileId, &path, &r.content, &r.contentUpdated, &r.versionId)
+		dbByPath[path] = r
+	}
+	rows.Close()
+
+	diskPaths := map[string]bool{}
+
+	type pendingInsert struct {
+		relPath string
+		content string
+	}
+	var pending []pendingInsert
+
+	err = filepath.WalkDir(d.root, func(path string, de fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if de.IsDir() {
+			return nil
+		}
+		rel, _ := filepath.Rel(d.root, path)
+		rel = filepath.ToSlash(rel)
+
+		rec, inDB := dbByPath[rel]
+		if !inDB && !d.IsAllowedPath(rel) {
+			return nil
+		}
+
+		diskPaths[rel] = true
+		info, err := de.Info()
+		if err != nil {
+			return nil
+		}
+		diskMtime := info.ModTime().UnixMilli()
+
+		if !inDB {
+			content, _ := os.ReadFile(path)
+			pending = append(pending, pendingInsert{rel, string(content)})
+			return nil
+		}
+
+		if diskMtime > rec.contentUpdated {
+			content, _ := os.ReadFile(path)
+			now := time.Now().UnixMilli()
+			d.sql.Exec(`UPDATE files SET Content=?, ContentUpdated=?, VersionId=? WHERE FileId=?`,
+				string(content), now, uniqueId(5), rec.fileId)
+			log.Printf("startup: updated %s from disk (disk newer)", rel)
+		} else if rec.versionId == "" {
+			d.sql.Exec(`UPDATE files SET VersionId=? WHERE FileId=?`, uniqueId(5), rec.fileId)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	// Trash DB entries for files no longer on disk (e.g. deleted while the app wasn't running).
+	now := time.Now().UnixMilli()
+	for path, rec := range dbByPath {
+		if !diskPaths[path] {
+			d.TrashFile(rec.fileId, path, rec.content, now)
+			log.Printf("startup: trashed stale DB entry for %s", path)
+		}
+	}
+
+	// Group pending inserts by folder and assign OrderNums alphabetically within each folder.
+	byFolder := map[string][]pendingInsert{}
+	for _, p := range pending {
+		folder := folderOf(p.relPath)
+		byFolder[folder] = append(byFolder[folder], p)
+	}
+	for folder, files := range byFolder {
+		sort.Slice(files, func(i, j int) bool {
+			return strings.ToLower(filepath.Base(files[i].relPath)) < strings.ToLower(filepath.Base(files[j].relPath))
+		})
+		startOrder := d.GetMaxOrderNumInFolder(folder) + 1
+		for i, p := range files {
+			d.insertFileRecord(p.relPath, p.content, startOrder+i)
+		}
+	}
+
+	return nil
+}
+
+// seedFtsCache populates the files_fts "last-synced" cache from files as it stands
+// right after startupScan. files_fts itself persists across restarts and should
+// already be in sync as of the last clean shutdown, but the in-memory cache starts
+// empty every restart — this seeds it back to a consistent baseline rather than
+// flushing immediately.
+func (d *DB) seedFtsCache() error {
+	rows, err := d.sql.Query(`SELECT FileId, Id, Path, Content FROM files`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	cache := map[string]ftsCacheEntry{}
+	for rows.Next() {
+		var fileId, path, content string
+		var rowid int64
+		if err := rows.Scan(&fileId, &rowid, &path, &content); err != nil {
+			continue
+		}
+		cache[fileId] = ftsCacheEntry{rowid: rowid, path: path, content: content}
+	}
+	d.fts.mu.Lock()
+	d.fts.cache = cache
+	d.fts.mu.Unlock()
+	return nil
+}
+
+func (d *DB) insertFileRecord(relPath, content string, orderNum int) (string, error) {
+	id := uniqueId(12)
+	versionId := uniqueId(5)
+	now := time.Now().UnixMilli()
+	_, err := d.sql.Exec(`INSERT INTO files (FileId, Path, Content, LastOpened, ContentUpdated, OrderNum, VersionId) VALUES (?,?,?,?,?,?,?)`,
+		id, relPath, content, 0, now, orderNum, versionId)
+	if err != nil {
+		return "", err
+	}
+	d.MarkDirty(id)
+	return id, nil
+}
+
+// InsertFileWithOrder inserts a new file record with an explicit OrderNum.
+// Use this when the caller controls the OrderNum (e.g. duplicate).
+func (d *DB) InsertFileWithOrder(relPath, content string, orderNum int) (string, error) {
+	return d.insertFileRecord(relPath, content, orderNum)
+}
+
+// InsertFileWithId inserts a files row reusing an existing FileId (trash restore)
+// rather than minting a new one, so its prior FileVersion history reattaches.
+// Returns the fresh VersionId assigned to this write.
+func (d *DB) InsertFileWithId(fileId, relPath, content string, orderNum int) (string, error) {
+	versionId := uniqueId(5)
+	now := time.Now().UnixMilli()
+	_, err := d.sql.Exec(`INSERT INTO files (FileId, Path, Content, LastOpened, ContentUpdated, OrderNum, VersionId) VALUES (?,?,?,?,?,?,?)`,
+		fileId, relPath, content, 0, now, orderNum, versionId)
+	if err != nil {
+		return "", err
+	}
+	d.MarkDirty(fileId)
+	return versionId, nil
+}
+
+func (d *DB) GetAllFiles() ([]DBFile, error) {
+	rows, err := d.sql.Query(`SELECT FileId, Path, LastOpened, OrderNum FROM files ORDER BY Path`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var files []DBFile
+	for rows.Next() {
+		var f DBFile
+		rows.Scan(&f.FileId, &f.Path, &f.LastOpened, &f.OrderNum)
+		files = append(files, f)
+	}
+	return files, nil
+}
+
+// GetAllFilesOnDisk returns DB files that actually exist on disk.
+func (d *DB) GetAllFilesOnDisk() ([]DBFile, error) {
+	all, err := d.GetAllFiles()
+	if err != nil {
+		return nil, err
+	}
+	var result []DBFile
+	for _, f := range all {
+		if _, err := os.Stat(filepath.Join(d.root, filepath.FromSlash(f.Path))); err == nil {
+			result = append(result, f)
+		}
+	}
+	return result, nil
+}
+
+func (d *DB) GetFile(fileId string) (*DBFile, error) {
+	var f DBFile
+	err := d.sql.QueryRow(`SELECT FileId, Path, Content, LastOpened, OrderNum, VersionId FROM files WHERE FileId=?`, fileId).
+		Scan(&f.FileId, &f.Path, &f.Content, &f.LastOpened, &f.OrderNum, &f.VersionId)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return &f, err
+}
+
+func (d *DB) GetFileByPath(relPath string) (*DBFile, error) {
+	var f DBFile
+	err := d.sql.QueryRow(`SELECT FileId, Path, Content, LastOpened, OrderNum, VersionId FROM files WHERE Path=?`, relPath).
+		Scan(&f.FileId, &f.Path, &f.Content, &f.LastOpened, &f.OrderNum, &f.VersionId)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return &f, err
+}
+
+func (d *DB) UpdateLastOpened(fileId string) error {
+	_, err := d.sql.Exec(`UPDATE files SET LastOpened=? WHERE FileId=?`, time.Now().UnixMilli(), fileId)
+	return err
+}
+
+func (d *DB) UpdateContent(fileId, content string) error {
+	now := time.Now().UnixMilli()
+	_, err := d.sql.Exec(`UPDATE files SET Content=?, ContentUpdated=? WHERE FileId=?`, content, now, fileId)
+	d.MarkDirty(fileId)
+	return err
+}
+
+func (d *DB) UpdateContentAndVersion(fileId, content, versionId string) error {
+	now := time.Now().UnixMilli()
+	_, err := d.sql.Exec(`UPDATE files SET Content=?, ContentUpdated=?, VersionId=? WHERE FileId=?`,
+		content, now, versionId, fileId)
+	d.MarkDirty(fileId)
+	return err
+}
+
+// UpdateContentAndVersionIf updates content only when the stored VersionId matches
+// expectedVersionId. Returns (true, nil) on success, (false, nil) if the version
+// didn't match (concurrent write raced ahead), or (false, err) on DB error.
+func (d *DB) UpdateContentAndVersionIf(fileId, content, versionId, expectedVersionId string) (bool, error) {
+	now := time.Now().UnixMilli()
+	res, err := d.sql.Exec(`UPDATE files SET Content=?, ContentUpdated=?, VersionId=? WHERE FileId=? AND VersionId=?`,
+		content, now, versionId, fileId, expectedVersionId)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if n == 1 {
+		d.MarkDirty(fileId)
+	}
+	return n == 1, err
+}
+
+func (d *DB) UpdatePathById(fileId, newPath string) error {
+	_, err := d.sql.Exec(`UPDATE files SET Path=? WHERE FileId=?`, newPath, fileId)
+	d.MarkDirty(fileId)
+	return err
+}
+
+func (d *DB) UpdatePath(oldPath, newPath string) error {
+	var fileId string
+	d.sql.QueryRow(`SELECT FileId FROM files WHERE Path=?`, oldPath).Scan(&fileId)
+	_, err := d.sql.Exec(`UPDATE files SET Path=? WHERE Path=?`, newPath, oldPath)
+	if fileId != "" {
+		d.MarkDirty(fileId)
+	}
+	return err
+}
+
+func (d *DB) UpdateFolderPath(oldPrefix, newPrefix string) error {
+	rows, err := d.sql.Query(`SELECT FileId, Path FROM files WHERE Path=? OR Path LIKE ?`,
+		oldPrefix, oldPrefix+"/%")
+	if err != nil {
+		return err
+	}
+	type rec struct{ id, path string }
+	var recs []rec
+	for rows.Next() {
+		var r rec
+		rows.Scan(&r.id, &r.path)
+		recs = append(recs, r)
+	}
+	rows.Close()
+	for _, r := range recs {
+		newPath := newPrefix + strings.TrimPrefix(r.path, oldPrefix)
+		d.sql.Exec(`UPDATE files SET Path=? WHERE FileId=?`, newPath, r.id)
+		d.MarkDirty(r.id)
+	}
+	return nil
+}
+
+func (d *DB) DeleteFile(fileId string) error {
+	_, err := d.sql.Exec(`DELETE FROM files WHERE FileId=?`, fileId)
+	d.MarkDirty(fileId)
+	return err
+}
+
+// GetFilesInFolderRecursive returns every file at or under folderPath (including
+// nested subfolders), full rows incl. Content — used to trash a folder's contents
+// before the recursive disk/DB delete.
+func (d *DB) GetFilesInFolderRecursive(folderPath string) ([]DBFile, error) {
+	rows, err := d.sql.Query(`SELECT FileId, Path, Content, LastOpened, OrderNum, VersionId FROM files WHERE Path=? OR Path LIKE ?`,
+		folderPath, folderPath+"/%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var files []DBFile
+	for rows.Next() {
+		var f DBFile
+		if err := rows.Scan(&f.FileId, &f.Path, &f.Content, &f.LastOpened, &f.OrderNum, &f.VersionId); err != nil {
+			return nil, err
+		}
+		files = append(files, f)
+	}
+	return files, rows.Err()
+}
+
+func (d *DB) EnsureFileTracked(relPath string) (string, error) {
+	f, err := d.GetFileByPath(relPath)
+	if err != nil {
+		return "", err
+	}
+	if f != nil {
+		return f.FileId, nil
+	}
+	content, _ := os.ReadFile(filepath.Join(d.root, filepath.FromSlash(relPath)))
+	folder := folderOf(relPath)
+	orderNum := d.GetMaxOrderNumInFolder(folder) + 1
+	return d.insertFileRecord(relPath, string(content), orderNum)
+}
+
+// NextNewN returns the smallest positive integer N not already used by a "new N" file in folderPath.
+func (d *DB) NextNewN(folderPath string) int {
+	var pattern string
+	if folderPath == "" {
+		pattern = "new %"
+	} else {
+		pattern = folderPath + "/new %"
+	}
+	rows, _ := d.sql.Query(`SELECT Path FROM files WHERE Path LIKE ?`, pattern)
+	defer rows.Close()
+	used := map[int]bool{}
+	re := regexp.MustCompile(`/new (\d+)$|^new (\d+)$`)
+	for rows.Next() {
+		var p string
+		rows.Scan(&p)
+		m := re.FindStringSubmatch(p)
+		if m != nil {
+			s := m[1]
+			if s == "" {
+				s = m[2]
+			}
+			if n, err := strconv.Atoi(s); err == nil {
+				used[n] = true
+			}
+		}
+	}
+	for i := 1; ; i++ {
+		if !used[i] {
+			return i
+		}
+	}
+}
+
+// NextDuplicateName returns foo (2).txt style name, incrementing until unused.
+func (d *DB) NextDuplicateName(folderPath, baseName string) string {
+	ext := filepath.Ext(baseName)
+	stem := strings.TrimSuffix(baseName, ext)
+	// strip existing " (N)" suffix from stem
+	re := regexp.MustCompile(` \(\d+\)$`)
+	stem = re.ReplaceAllString(stem, "")
+
+	for n := 2; ; n++ {
+		candidate := fmt.Sprintf("%s (%d)%s", stem, n, ext)
+		var relPath string
+		if folderPath == "" {
+			relPath = candidate
+		} else {
+			relPath = folderPath + "/" + candidate
+		}
+		if _, err := os.Stat(filepath.Join(d.root, filepath.FromSlash(relPath))); os.IsNotExist(err) {
+			return candidate
+		}
+	}
+}
+
+// folderOf returns the parent folder path of a relative file path ("." becomes "").
+func folderOf(relPath string) string {
+	dir := filepath.Dir(relPath)
+	if dir == "." {
+		return ""
+	}
+	return filepath.ToSlash(dir)
+}
+
+// GetMaxOrderNumInFolder returns the max OrderNum among files directly in folderPath, or -1 if none.
+func (d *DB) GetMaxOrderNumInFolder(folderPath string) int {
+	var maxVal sql.NullInt64
+	if folderPath == "" {
+		d.sql.QueryRow(`SELECT MAX(OrderNum) FROM files WHERE Path NOT LIKE '%/%'`).Scan(&maxVal)
+	} else {
+		d.sql.QueryRow(
+			`SELECT MAX(OrderNum) FROM files WHERE Path LIKE ? AND Path NOT LIKE ?`,
+			folderPath+"/%", folderPath+"/%/%",
+		).Scan(&maxVal)
+	}
+	if !maxVal.Valid {
+		return -1
+	}
+	return int(maxVal.Int64)
+}
+
+// GetFilesInFolderSorted returns files directly in folderPath sorted by OrderNum ascending.
+func (d *DB) GetFilesInFolderSorted(folderPath string) ([]DBFile, error) {
+	var rows *sql.Rows
+	var err error
+	if folderPath == "" {
+		rows, err = d.sql.Query(
+			`SELECT FileId, Path, LastOpened, OrderNum FROM files WHERE Path NOT LIKE '%/%' ORDER BY OrderNum`,
+		)
+	} else {
+		rows, err = d.sql.Query(
+			`SELECT FileId, Path, LastOpened, OrderNum FROM files WHERE Path LIKE ? AND Path NOT LIKE ? ORDER BY OrderNum`,
+			folderPath+"/%", folderPath+"/%/%",
+		)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var files []DBFile
+	for rows.Next() {
+		var f DBFile
+		rows.Scan(&f.FileId, &f.Path, &f.LastOpened, &f.OrderNum)
+		files = append(files, f)
+	}
+	return files, nil
+}
+
+// ShiftOrderNumsUp increments OrderNum by 1 for all files in folderPath where OrderNum >= fromOrderNum.
+func (d *DB) ShiftOrderNumsUp(folderPath string, fromOrderNum int) error {
+	var err error
+	if folderPath == "" {
+		_, err = d.sql.Exec(
+			`UPDATE files SET OrderNum = OrderNum + 1 WHERE Path NOT LIKE '%/%' AND OrderNum >= ?`,
+			fromOrderNum,
+		)
+	} else {
+		_, err = d.sql.Exec(
+			`UPDATE files SET OrderNum = OrderNum + 1 WHERE Path LIKE ? AND Path NOT LIKE ? AND OrderNum >= ?`,
+			folderPath+"/%", folderPath+"/%/%", fromOrderNum,
+		)
+	}
+	return err
+}
+
+// CompactOrderNums re-sequences OrderNums as 0,1,2… for files directly in folderPath.
+func (d *DB) CompactOrderNums(folderPath string) error {
+	files, err := d.GetFilesInFolderSorted(folderPath)
+	if err != nil {
+		return err
+	}
+	for i, f := range files {
+		d.sql.Exec(`UPDATE files SET OrderNum = ? WHERE FileId = ?`, i, f.FileId)
+	}
+	return nil
+}
+
+// SetOrderNum sets OrderNum for a single file.
+func (d *DB) SetOrderNum(fileId string, orderNum int) error {
+	_, err := d.sql.Exec(`UPDATE files SET OrderNum = ? WHERE FileId = ?`, orderNum, fileId)
+	return err
+}

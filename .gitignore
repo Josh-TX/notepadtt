@@ -1,7 +1,6 @@
-/Server/obj
-/Server/bin
-/Server/wwwroot
-/Server/data
-/Server/.vs
-/UI/node_modules
-Server/Properties/launchSettings.json
+notepadtt
+frontend/node_modules/
+frontend/dist/
+!frontend/dist/.gitkeep
+*.db
+__debug*

@@ -1,8 +1,0 @@
-**/node_modules
-Server/wwwroot
-Server/.vscode
-Server/bin
-Server/data
-Server/obj
-Server/*.sln
-Server/Dockerfile

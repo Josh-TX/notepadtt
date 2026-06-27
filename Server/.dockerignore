@@ -1,6 +1,0 @@
-.vscode
-bin
-data
-obj
-*.sln
-appsettings.Development.json
