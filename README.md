@@ -1,4 +1,15 @@
-# Notepadtt
+this is the legacy version of notepadtt, written in .NET and Angular in 2024
+
+## Legacy Version Differences
+* Deployed via a container rather than a binary
+* Can't select any folders... just the top level folder
+* No Trash or Version History. There's no sqlite database
+* No cross-file searches
+* Used a custom single file find rather than native
+
+
+
+# Notepadtt (legacy)
 
 A simple notepad app inspired by notepad++. Notes are auto-saved and synchronized in real time. Written in .NET and Angular, and heavily utilizes SignalR. 
 
