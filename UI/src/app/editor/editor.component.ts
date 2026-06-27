@@ -88,7 +88,7 @@ export class EditorComponent {
                 } else {
                     this.lastFileId = tabContent.fileId;
                     this.renderText(tabContent.text);
-                    this.updateHighlights();
+                    setTimeout(() => this.updateHighlights());
                 }
             }
         }, { allowSignalWrites: true });
