@@ -25,6 +25,15 @@
           </section>
 
           <section class="field-row">
+            <label>markdown syntax highlighting</label>
+            <select v-model="form.markdownMode">
+              <option :value="0">all new files</option>
+              <option :value="1">all files without an extension</option>
+              <option :value="2">only .md files</option>
+            </select>
+          </section>
+
+          <section class="field-row">
             <label>Editor Font Size</label>
             <input type="number" min="10" max="24" step="1" v-model.number="form.editorFontSize" />
           </section>

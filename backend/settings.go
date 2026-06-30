@@ -32,6 +32,7 @@ type Settings struct {
 	EditorFontSize     int  `json:"editorFontSize"`     // px; clamped to [10,24] on save
 	SidebarWidth       int  `json:"sidebarWidth"`       // px; not editable via the Settings modal — see UpdateSidebarWidth/PUT /api/settings/sidebarwidth
 	DesktopSidebarOpen bool `json:"desktopSidebarOpen"` // not editable via the Settings modal — see UpdateDesktopSidebarOpen/PUT /api/settings/desktopsidebaropen
+	MarkdownMode       int  `json:"markdownMode"`        // 0=all new files, 1=all files without extension, 2=only .md files
 }
 
 func defaultSettings() Settings {
@@ -57,6 +58,7 @@ func defaultSettings() Settings {
 		EditorFontSize:     14,
 		SidebarWidth:       400,
 		DesktopSidebarOpen: false,
+		MarkdownMode:       0,
 	}
 }
 
@@ -80,7 +82,8 @@ func createSettingsSchema(sqldb *sql.DB) error {
 		VeryLongTermMinDelay TEXT,
 		EditorFontSize INTEGER,
 		SidebarWidth INTEGER,
-		DesktopSidebarOpen INTEGER
+		DesktopSidebarOpen INTEGER,
+		MarkdownMode INTEGER
 	)`)
 	if err != nil {
 		return err
@@ -100,12 +103,12 @@ func insertSettingsRow(sqldb *sql.DB, s Settings) error {
 		TabCloseIcon, WordWrap, CtrlFSearch,
 		LinesPerResult, MaxResultsPerFile, MaxFiles, TrashTTL, ShortTermTTL, ShortTermMinDelay,
 		MedTermTTL, MedTermMinDelay, LongTermTTL, LongTermMinDelay, VeryLongTermTTL, VeryLongTermMinDelay,
-		EditorFontSize, SidebarWidth, DesktopSidebarOpen
-	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		EditorFontSize, SidebarWidth, DesktopSidebarOpen, MarkdownMode
+	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		s.TabCloseIcon, s.WordWrap, s.CtrlFSearch,
 		s.LinesPerResult, s.MaxResultsPerFile, s.MaxFiles, s.TrashTTL, s.ShortTermTTL, s.ShortTermMinDelay,
 		s.MedTermTTL, s.MedTermMinDelay, s.LongTermTTL, s.LongTermMinDelay, s.VeryLongTermTTL, s.VeryLongTermMinDelay,
-		s.EditorFontSize, s.SidebarWidth, s.DesktopSidebarOpen)
+		s.EditorFontSize, s.SidebarWidth, s.DesktopSidebarOpen, s.MarkdownMode)
 	return err
 }
 
@@ -117,12 +120,12 @@ func (d *DB) GetSettings() (Settings, error) {
 		TabCloseIcon, WordWrap, CtrlFSearch,
 		LinesPerResult, MaxResultsPerFile, MaxFiles, TrashTTL, ShortTermTTL, ShortTermMinDelay,
 		MedTermTTL, MedTermMinDelay, LongTermTTL, LongTermMinDelay, VeryLongTermTTL, VeryLongTermMinDelay,
-		EditorFontSize, SidebarWidth, DesktopSidebarOpen
+		EditorFontSize, SidebarWidth, DesktopSidebarOpen, MarkdownMode
 		FROM Settings LIMIT 1`).
 		Scan(&s.TabCloseIcon, &s.WordWrap, &s.CtrlFSearch,
 			&s.LinesPerResult, &s.MaxResultsPerFile, &s.MaxFiles, &s.TrashTTL, &s.ShortTermTTL, &s.ShortTermMinDelay,
 			&s.MedTermTTL, &s.MedTermMinDelay, &s.LongTermTTL, &s.LongTermMinDelay, &s.VeryLongTermTTL, &s.VeryLongTermMinDelay,
-			&s.EditorFontSize, &s.SidebarWidth, &s.DesktopSidebarOpen)
+			&s.EditorFontSize, &s.SidebarWidth, &s.DesktopSidebarOpen, &s.MarkdownMode)
 	return s, err
 }
 
@@ -138,11 +141,11 @@ func (d *DB) SaveSettings(s Settings) error {
 		TabCloseIcon=?, WordWrap=?, CtrlFSearch=?,
 		LinesPerResult=?, MaxResultsPerFile=?, MaxFiles=?, TrashTTL=?, ShortTermTTL=?, ShortTermMinDelay=?,
 		MedTermTTL=?, MedTermMinDelay=?, LongTermTTL=?, LongTermMinDelay=?, VeryLongTermTTL=?, VeryLongTermMinDelay=?,
-		EditorFontSize=?, SidebarWidth=?, DesktopSidebarOpen=?`,
+		EditorFontSize=?, SidebarWidth=?, DesktopSidebarOpen=?, MarkdownMode=?`,
 		s.TabCloseIcon, s.WordWrap, s.CtrlFSearch,
 		s.LinesPerResult, s.MaxResultsPerFile, s.MaxFiles, s.TrashTTL, s.ShortTermTTL, s.ShortTermMinDelay,
 		s.MedTermTTL, s.MedTermMinDelay, s.LongTermTTL, s.LongTermMinDelay, s.VeryLongTermTTL, s.VeryLongTermMinDelay,
-		s.EditorFontSize, s.SidebarWidth, s.DesktopSidebarOpen)
+		s.EditorFontSize, s.SidebarWidth, s.DesktopSidebarOpen, s.MarkdownMode)
 	return err
 }
 

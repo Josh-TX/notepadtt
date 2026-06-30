@@ -3,15 +3,21 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { ref, watch, computed, onMounted, onUnmounted } from 'vue'
 import CodeMirror from 'codemirror'
 import 'codemirror/lib/codemirror.css'
-import { store, onContentUpdate, editorActions, sendEdit } from '../store.js'
+import { store, onContentUpdate, editorActions, sendEdit, getFilesInFolder } from '../store.js'
 import { findMatchRanges } from '../textMatch.js'
 import { computeMinimalEdit } from '../cmEdit.js'
+import { getModeInfo } from '../langMode.js'
 
 const editorEl = ref(null)
 let cm = null
+
+const activeFilename = computed(() => {
+  if (!store.activeFileId) return null
+  return getFilesInFolder(store.currentFolderPath).find(f => f.fileId === store.activeFileId)?.name ?? null
+})
 let ignoreNextChange = false
 let searchMarks = []
 let resizeObserver = null
@@ -123,6 +129,8 @@ watch(() => store.activeFileId, (fileId) => {
   cm.setValue(content)
   cm.clearHistory()
   cm.setOption('readOnly', !fileId)
+  const modeInfo = getModeInfo(activeFilename.value, store.settings?.markdownMode ?? 0)
+  cm.setOption('mode', modeInfo?.mime ?? null)
   if (store.pendingScrollLine !== null) {
     const line = store.pendingScrollLine
     store.pendingScrollLine = null
@@ -138,6 +146,13 @@ watch(() => store.activeFileId, (fileId) => {
 // apply word wrap toggle
 watch(() => store.wordWrap, (wrap) => {
   cm?.setOption('lineWrapping', wrap)
+})
+
+// re-apply mode when the markdownMode setting changes (affects extension-less files)
+watch(() => store.settings?.markdownMode, () => {
+  if (!cm) return
+  const modeInfo = getModeInfo(activeFilename.value, store.settings?.markdownMode ?? 0)
+  cm.setOption('mode', modeInfo?.mime ?? null)
 })
 
 // apply font size changes from the Settings modal — CodeMirror needs an explicit

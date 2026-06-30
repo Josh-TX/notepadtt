@@ -10,6 +10,7 @@
       <button class="footer-btn" :disabled="!activeFile" @click="openMove" title="Move file">Move</button>
     </div>
     <div v-if="activeFile" class="right" ref="rightEl" :class="{ 'hidden-for-space': !infoFits }">
+      <span class="lang-label">{{ langLabel }}</span>
       <span>length: {{ length }}&nbsp;&nbsp;lines: {{ lines }}</span>
     </div>
   </div>
@@ -19,6 +20,7 @@
 import { computed, ref, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { store, getFilesInFolder, editorActions, openHistoryModal, openMoveModal, showToast } from '../store.js'
 import { updateWrap } from '../api.js'
+import { getModeInfo } from '../langMode.js'
 
 const activeContent = computed(() => {
   if (!store.activeFileId) return null
@@ -38,6 +40,12 @@ const length = computed(() => {
 const lines = computed(() => {
   if (activeContent.value === null) return 0
   return activeContent.value.split('\n').length
+})
+
+const langLabel = computed(() => {
+  if (!activeFile.value) return null
+  const info = getModeInfo(activeFile.value.name, store.settings?.markdownMode ?? 0)
+  return info?.name ?? 'text'
 })
 
 function undo() { editorActions.undo() }
@@ -87,7 +95,7 @@ onBeforeUnmount(() => {
   resizeObserver?.disconnect()
 })
 
-watch([length, lines, activeFile], () => {
+watch([length, lines, activeFile, langLabel], () => {
   nextTick(checkFit)
 })
 </script>
@@ -121,10 +129,11 @@ watch([length, lines, activeFile], () => {
 .footer-btn.active { opacity: 1; }
 .footer-btn:disabled { opacity: 0.35; cursor: default; }
 .wrap-check.hidden { color: transparent; }
-.right { color: #ffffffcc; font-size: 14px; flex-shrink: 0; white-space: nowrap; }
+.right { color: #ffffffcc; font-size: 14px; flex-shrink: 0; white-space: nowrap; display: flex; gap: 12px; }
 .right.hidden-for-space { position: absolute; visibility: hidden; pointer-events: none; }
 
 @media (max-width: 767px) {
   .icon { display: none; }
+  .lang-label { display: none; }
 }
 </style>
