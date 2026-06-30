@@ -95,3 +95,8 @@ Adds desktop-only drag-and-drop within the Sidebar's FileTree to move files and 
 Date: 2026-06-26
 
 Adds a "Move" context menu item (after "Rename") in both the TabBar and FileTree file/folder menus, opening a new MoveFileModal. The modal title is "Move <original-path>". A text input pre-filled with the item's full path is paired with a Move button; pressing Enter triggers Move. The modal body has breadcrumbs (root="/") above a folder browser showing all immediate subfolders of the input's current directory; clicking a subfolder updates only the directory portion of the input, preserving the filename. Move is disabled (with inline conflict error) when a conflict is detected in real-time against the in-memory FileTree, or disabled silently when the path is unchanged. The backend's move-file endpoint gains MkdirAll support so typing a novel folder path implicitly creates it, and drops the auto-rename-on-conflict behavior in favor of returning 409; move-folder similarly gains MkdirAll.
+
+# Syntax Highlighting
+Date: 2026-06-29
+
+Adds CodeMirror 5 syntax highlighting for a curated set of languages (JavaScript/TypeScript/JSON, Python, Markdown, YAML, HTML, CSS, Shell, SQL), detected automatically from the filename via `findModeByFileName`. Introduces a new `MarkdownMode` int setting (0=all new files, 1=all files without an extension, 2=only .md files) controlling when markdown highlighting applies to files with no recognized extension. The active language is displayed as a text label in the Footer on wide (≥768px) viewports, showing "text" for plain files.
