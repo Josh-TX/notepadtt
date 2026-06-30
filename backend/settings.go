@@ -34,6 +34,7 @@ type Settings struct {
 	DesktopSidebarOpen bool   `json:"desktopSidebarOpen"` // not editable via the Settings modal — see UpdateDesktopSidebarOpen/PUT /api/settings/desktopsidebaropen
 	MarkdownMode       int    `json:"markdownMode"`       // 0=all new files, 1=all files without extension, 2=only .md files
 	ColorOverrides     string `json:"colorOverrides"`     // comma-separated key=color pairs, e.g. "keyword=#569cd6, header=#4babfd"
+	Title              string `json:"title"`              // HTML <title> tag value
 }
 
 func defaultSettings() Settings {
@@ -61,6 +62,7 @@ func defaultSettings() Settings {
 		DesktopSidebarOpen: false,
 		MarkdownMode:       0,
 		ColorOverrides:     "keyword=#569cd6, header=#54b0ff",
+		Title:              "notepadtt",
 	}
 }
 
@@ -85,13 +87,13 @@ func createSettingsSchema(sqldb *sql.DB) error {
 		EditorFontSize INTEGER,
 		SidebarWidth INTEGER,
 		DesktopSidebarOpen INTEGER,
-		MarkdownMode INTEGER
+		MarkdownMode INTEGER,
+		ColorOverrides TEXT,
+		Title TEXT
 	)`)
 	if err != nil {
 		return err
 	}
-	// migration: add ColorOverrides column if not present (ignore "duplicate column name" errors)
-	sqldb.Exec(`ALTER TABLE Settings ADD COLUMN ColorOverrides TEXT DEFAULT ''`)
 	var count int
 	if err := sqldb.QueryRow(`SELECT COUNT(*) FROM Settings`).Scan(&count); err != nil {
 		return err
@@ -107,12 +109,12 @@ func insertSettingsRow(sqldb *sql.DB, s Settings) error {
 		TabCloseIcon, WordWrap, CtrlFSearch,
 		LinesPerResult, MaxResultsPerFile, MaxFiles, TrashTTL, ShortTermTTL, ShortTermMinDelay,
 		MedTermTTL, MedTermMinDelay, LongTermTTL, LongTermMinDelay, VeryLongTermTTL, VeryLongTermMinDelay,
-		EditorFontSize, SidebarWidth, DesktopSidebarOpen, MarkdownMode, ColorOverrides
-	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		EditorFontSize, SidebarWidth, DesktopSidebarOpen, MarkdownMode, ColorOverrides, Title
+	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		s.TabCloseIcon, s.WordWrap, s.CtrlFSearch,
 		s.LinesPerResult, s.MaxResultsPerFile, s.MaxFiles, s.TrashTTL, s.ShortTermTTL, s.ShortTermMinDelay,
 		s.MedTermTTL, s.MedTermMinDelay, s.LongTermTTL, s.LongTermMinDelay, s.VeryLongTermTTL, s.VeryLongTermMinDelay,
-		s.EditorFontSize, s.SidebarWidth, s.DesktopSidebarOpen, s.MarkdownMode, s.ColorOverrides)
+		s.EditorFontSize, s.SidebarWidth, s.DesktopSidebarOpen, s.MarkdownMode, s.ColorOverrides, s.Title)
 	return err
 }
 
@@ -124,12 +126,12 @@ func (d *DB) GetSettings() (Settings, error) {
 		TabCloseIcon, WordWrap, CtrlFSearch,
 		LinesPerResult, MaxResultsPerFile, MaxFiles, TrashTTL, ShortTermTTL, ShortTermMinDelay,
 		MedTermTTL, MedTermMinDelay, LongTermTTL, LongTermMinDelay, VeryLongTermTTL, VeryLongTermMinDelay,
-		EditorFontSize, SidebarWidth, DesktopSidebarOpen, MarkdownMode, ColorOverrides
+		EditorFontSize, SidebarWidth, DesktopSidebarOpen, MarkdownMode, ColorOverrides, Title
 		FROM Settings LIMIT 1`).
 		Scan(&s.TabCloseIcon, &s.WordWrap, &s.CtrlFSearch,
 			&s.LinesPerResult, &s.MaxResultsPerFile, &s.MaxFiles, &s.TrashTTL, &s.ShortTermTTL, &s.ShortTermMinDelay,
 			&s.MedTermTTL, &s.MedTermMinDelay, &s.LongTermTTL, &s.LongTermMinDelay, &s.VeryLongTermTTL, &s.VeryLongTermMinDelay,
-			&s.EditorFontSize, &s.SidebarWidth, &s.DesktopSidebarOpen, &s.MarkdownMode, &s.ColorOverrides)
+			&s.EditorFontSize, &s.SidebarWidth, &s.DesktopSidebarOpen, &s.MarkdownMode, &s.ColorOverrides, &s.Title)
 	return s, err
 }
 
@@ -145,11 +147,11 @@ func (d *DB) SaveSettings(s Settings) error {
 		TabCloseIcon=?, WordWrap=?, CtrlFSearch=?,
 		LinesPerResult=?, MaxResultsPerFile=?, MaxFiles=?, TrashTTL=?, ShortTermTTL=?, ShortTermMinDelay=?,
 		MedTermTTL=?, MedTermMinDelay=?, LongTermTTL=?, LongTermMinDelay=?, VeryLongTermTTL=?, VeryLongTermMinDelay=?,
-		EditorFontSize=?, SidebarWidth=?, DesktopSidebarOpen=?, MarkdownMode=?, ColorOverrides=?`,
+		EditorFontSize=?, SidebarWidth=?, DesktopSidebarOpen=?, MarkdownMode=?, ColorOverrides=?, Title=?`,
 		s.TabCloseIcon, s.WordWrap, s.CtrlFSearch,
 		s.LinesPerResult, s.MaxResultsPerFile, s.MaxFiles, s.TrashTTL, s.ShortTermTTL, s.ShortTermMinDelay,
 		s.MedTermTTL, s.MedTermMinDelay, s.LongTermTTL, s.LongTermMinDelay, s.VeryLongTermTTL, s.VeryLongTermMinDelay,
-		s.EditorFontSize, s.SidebarWidth, s.DesktopSidebarOpen, s.MarkdownMode, s.ColorOverrides)
+		s.EditorFontSize, s.SidebarWidth, s.DesktopSidebarOpen, s.MarkdownMode, s.ColorOverrides, s.Title)
 	return err
 }
 

@@ -8,6 +8,11 @@
         </div>
         <div class="settings-body">
           <section class="field-row">
+            <label>Html Title</label>
+            <input type="text" class="title-input" v-model="form.title" />
+          </section>
+
+          <section class="field-row">
             <label>Tab Close Icon</label>
             <select v-model="form.tabCloseIcon">
               <option value="visible">Visible</option>
@@ -239,6 +244,7 @@ select:focus, input:focus { border-color: #0078d4; }
 input[type="number"] { width: 70px; }
 .duration-input { width: 90px; }
 .color-overrides-input { width: 220px; }
+.title-input { width: 160px; }
 .settings-footer {
   display: flex;
   justify-content: flex-end;

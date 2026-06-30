@@ -100,6 +100,10 @@ onMounted(async () => {
   await navigateToFolder(folderFromRoute())
 })
 
+watch(() => store.settings?.title, (title) => {
+  if (title != null) document.title = title
+})
+
 // global Ctrl+F / Cmd+F: open the Search Modal instead of native browser find,
 // unless the user has set ctrlFSearch to false (defaults to true before settings load)
 function onKeydown(e) {
