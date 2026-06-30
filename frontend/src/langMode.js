@@ -23,6 +23,11 @@ export function getModeInfo(filename, markdownMode = 0) {
     const mime = info.mime ?? (info.mimes && info.mimes[0]) ?? null
     return { mime, name: info.name }
   }
+  // readme.md / contributing.md / history.md match CM5's "gfm" file pattern before
+  // the markdown extension lookup — treat them as markdown since gfm isn't loaded.
+  if (info && info.mode === 'gfm') {
+    return { mime: 'text/x-markdown', name: 'Markdown' }
+  }
   if (markdownMode === 0 && bare.toLowerCase().startsWith('new ')) {
     return { mime: 'text/x-markdown', name: 'Markdown' }
   }

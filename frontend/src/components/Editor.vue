@@ -118,7 +118,49 @@ function applyTheme() {
     .CodeMirror-focused .CodeMirror-selected { background: #264f78; }
     .CodeMirror-scroll { background: #1f1f1f; }
     .search-term-highlight { background: rgba(154, 103, 0, 0.35); color: #ffc357; border-radius: 2px; }
+    .cm-keyword    { color: #c586c0; }
+    .cm-atom       { color: #569cd6; }
+    .cm-number     { color: #b5cea8; }
+    .cm-def        { color: #dcdcaa; }
+    .cm-variable   { color: #d4d4d4; }
+    .cm-variable-2 { color: #9cdcfe; }
+    .cm-variable-3, .cm-type { color: #4ec9b0; }
+    .cm-property   { color: #9cdcfe; }
+    .cm-operator   { color: #d4d4d4; }
+    .cm-string     { color: #ce9178; }
+    .cm-string-2   { color: #ce9178; }
+    .cm-comment    { color: #6a9955; font-style: italic; }
+    .cm-builtin    { color: #4ec9b0; }
+    .cm-qualifier  { color: #d7ba7d; }
+    .cm-tag        { color: #569cd6; }
+    .cm-attribute  { color: #9cdcfe; }
+    .cm-bracket    { color: #d4d4d4; }
+    .cm-meta       { color: #d4d4d4; }
+    .cm-error      { color: #f44747; }
+    .cm-header     { color: #569cd6; font-weight: bold; }
+    .cm-quote      { color: #6a9955; }
+    .cm-strong     { font-weight: bold; }
+    .cm-em         { font-style: italic; }
+    .cm-link       { color: #569cd6; }
+    .cm-url        { color: #569cd6; }
+    .cm-hr         { color: #858585; }
+    .cm-formatting { color: #858585; }
+    ${parseColorOverrides(store.settings?.colorOverrides ?? 'keyword=#569cd6, header=#4babfd')}
   `
+}
+
+function parseColorOverrides(raw) {
+  return raw.split(',')
+    .map(s => s.trim())
+    .filter(s => s.includes('='))
+    .map(s => {
+      const eq = s.indexOf('=')
+      const key = s.slice(0, eq).trim()
+      const val = s.slice(eq + 1).trim()
+      return key && val ? `.cm-${key} { color: ${val}; }` : ''
+    })
+    .filter(Boolean)
+    .join('\n    ')
 }
 
 // load content when active file changes
@@ -161,6 +203,10 @@ watch(() => store.settings?.editorFontSize, () => {
   if (!cm) return
   applyTheme()
   cm.refresh()
+})
+
+watch(() => store.settings?.colorOverrides, () => {
+  applyTheme()
 })
 
 // receive live content updates from other clients

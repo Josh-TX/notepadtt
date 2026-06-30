@@ -10,8 +10,8 @@
       <button class="footer-btn" :disabled="!activeFile" @click="openMove" title="Move file">Move</button>
     </div>
     <div v-if="activeFile" class="right" ref="rightEl" :class="{ 'hidden-for-space': !infoFits }">
-      <span class="lang-label">{{ langLabel }}</span>
       <span>length: {{ length }}&nbsp;&nbsp;lines: {{ lines }}</span>
+      <span class="lang-label">{{ langLabel }}</span>
     </div>
   </div>
 </template>

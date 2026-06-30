@@ -38,6 +38,11 @@
             <input type="number" min="10" max="24" step="1" v-model.number="form.editorFontSize" />
           </section>
 
+          <section class="field-row">
+            <label>Override Syntax Colors</label>
+            <input type="text" class="color-overrides-input" v-model="form.colorOverrides" />
+          </section>
+
           <section class="field-group">
             <div class="group-title">Search Results</div>
             <div class="field-row">
@@ -233,6 +238,7 @@ select, input[type="text"], input[type="number"] {
 select:focus, input:focus { border-color: #0078d4; }
 input[type="number"] { width: 70px; }
 .duration-input { width: 90px; }
+.color-overrides-input { width: 220px; }
 .settings-footer {
   display: flex;
   justify-content: flex-end;
