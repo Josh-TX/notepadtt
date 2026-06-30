@@ -17,7 +17,17 @@ import (
 )
 
 var allowedExtensions = map[string]bool{
-	".txt": true, ".md": true, ".json": true, ".yaml": true, ".sh": true,
+	".txt": true, ".md": true, ".json": true, ".yaml": true, ".yml": true,
+	".sh": true, ".html": true, ".css": true, ".js": true, ".xml": true,
+	".csv": true, ".py": true, ".ts": true, ".java": true, ".c": true,
+	".cpp": true, ".toml": true, ".ini": true, ".log": true, ".sql": true,
+	".rs": true, ".go": true, ".php": true, ".rb": true, ".swift": true,
+	".kt": true, ".vue": true, ".jsx": true, ".tsx": true, ".env": true,
+	".conf": true,
+}
+
+var allowedFilenames = map[string]bool{
+	"Dockerfile": true,
 }
 
 var newNPattern = regexp.MustCompile(`^new \d+$`)
@@ -104,7 +114,7 @@ func (d *DB) IsAllowedPath(relPath string) bool {
 	if newNPattern.MatchString(name) {
 		return true
 	}
-	return allowedExtensions[filepath.Ext(name)]
+	return allowedExtensions[filepath.Ext(name)] || allowedFilenames[name]
 }
 
 func (d *DB) IsTracked(relPath string) bool {

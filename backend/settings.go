@@ -32,8 +32,8 @@ type Settings struct {
 	EditorFontSize     int    `json:"editorFontSize"`     // px; clamped to [10,24] on save
 	SidebarWidth       int    `json:"sidebarWidth"`       // px; not editable via the Settings modal — see UpdateSidebarWidth/PUT /api/settings/sidebarwidth
 	DesktopSidebarOpen bool   `json:"desktopSidebarOpen"` // not editable via the Settings modal — see UpdateDesktopSidebarOpen/PUT /api/settings/desktopsidebaropen
-	MarkdownMode       int    `json:"markdownMode"`        // 0=all new files, 1=all files without extension, 2=only .md files
-	ColorOverrides     string `json:"colorOverrides"`      // comma-separated key=color pairs, e.g. "keyword=#569cd6, header=#4babfd"
+	MarkdownMode       int    `json:"markdownMode"`       // 0=all new files, 1=all files without extension, 2=only .md files
+	ColorOverrides     string `json:"colorOverrides"`     // comma-separated key=color pairs, e.g. "keyword=#569cd6, header=#4babfd"
 }
 
 func defaultSettings() Settings {
@@ -60,7 +60,7 @@ func defaultSettings() Settings {
 		SidebarWidth:       400,
 		DesktopSidebarOpen: false,
 		MarkdownMode:       0,
-		ColorOverrides:     "keyword=#569cd6, header=#4babfd",
+		ColorOverrides:     "keyword=#569cd6, header=#54b0ff",
 	}
 }
 
