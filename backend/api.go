@@ -450,6 +450,22 @@ func (s *Server) handleDeleteFolder(w http.ResponseWriter, r *http.Request) {
 		Path string `json:"path"`
 	}
 	json.NewDecoder(r.Body).Decode(&body)
+
+	force := r.URL.Query().Get("force") == "true"
+	if !force {
+		count, err := s.countUntrackedFilesInFolder(body.Path)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		if count > 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]int{"untrackedCount": count})
+			return
+		}
+	}
+
 	files, err := s.db.GetFilesInFolderRecursive(body.Path)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
@@ -466,6 +482,25 @@ func (s *Server) handleDeleteFolder(w http.ResponseWriter, r *http.Request) {
 	}
 	s.broadcastTree("API: folder deleted")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) countUntrackedFilesInFolder(folderRelPath string) (int, error) {
+	diskPath := filepath.Join(s.root, filepath.FromSlash(folderRelPath))
+	count := 0
+	err := filepath.Walk(diskPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		relPath, err := filepath.Rel(s.root, path)
+		if err != nil {
+			return nil
+		}
+		if !s.db.IsAllowedPath(filepath.ToSlash(relPath)) {
+			count++
+		}
+		return nil
+	})
+	return count, err
 }
 
 // handleListTrash returns every trashed file as a lightweight summary (no content),

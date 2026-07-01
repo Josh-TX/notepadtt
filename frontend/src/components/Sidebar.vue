@@ -503,8 +503,13 @@ async function doRenameFolder(folder) {
 
 async function doDeleteFolder(folder) {
   menuFolder.value = null
-  if (!confirm(`Delete folder "${folder.name}" and all its contents? This cannot be undone.`)) return
-  await deleteFolder(folder.path)
+  if (!confirm(`Delete folder "${folder.name}" and all its contents? Text files will be moved to trash.`)) return
+  const result = await deleteFolder(folder.path)
+  if (result?.untrackedCount > 0) {
+    const n = result.untrackedCount
+    if (!confirm(`This folder contains ${n} non-text file${n === 1 ? '' : 's'} that cannot be recovered after deletion. Delete anyway?`)) return
+    await deleteFolder(folder.path, true)
+  }
   // if current folder was inside deleted folder, navigate up
   if (store.currentFolderPath === folder.path || store.currentFolderPath.startsWith(folder.path + '/')) {
     const parent = folder.path.includes('/') ? folder.path.split('/').slice(0, -1).join('/') : ''
