@@ -7,7 +7,6 @@
         <span class="wrap-check" :class="{ hidden: !store.wordWrap }">✓</span> Wrap
       </button>
       <button class="footer-btn" @click="openHistory" title="View file history"><span class="icon">🕓</span> History</button>
-      <button class="footer-btn" :disabled="!activeFile" @click="openMove" title="Move file">Move</button>
     </div>
     <div v-if="activeFile" class="right" ref="rightEl" :class="{ 'hidden-for-space': !infoFits }">
       <span>length: {{ length }}&nbsp;&nbsp;lines: {{ lines }}</span>
@@ -18,7 +17,7 @@
 
 <script setup>
 import { computed, ref, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
-import { store, getFilesInFolder, editorActions, openHistoryModal, openMoveModal, showToast } from '../store.js'
+import { store, getFilesInFolder, editorActions, openHistoryModal, showToast } from '../store.js'
 import { updateWrap } from '../api.js'
 import { getModeInfo } from '../langMode.js'
 
@@ -65,11 +64,6 @@ async function toggleWordWrap() {
 function openHistory() {
   if (!activeFile.value) return
   openHistoryModal(activeFile.value)
-}
-
-function openMove() {
-  if (!activeFile.value) return
-  openMoveModal({ type: 'file', fileId: activeFile.value.fileId, path: activeFile.value.path, name: activeFile.value.name })
 }
 
 const footerEl = ref(null)
