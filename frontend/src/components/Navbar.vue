@@ -7,7 +7,7 @@
         <rect x="1" y="11" width="14" height="1.5" rx="0.5"/>
       </svg>
     </button>
-    <nav class="navbar">
+    <nav class="navbar" :class="{ 'no-sidebar-btn': store.isPushLayout && store.sidebarOpen }">
       <router-link v-if="crumbs.length" class="crumb link" to="/">root</router-link>
       <span v-else class="crumb">root</span>
       <span class="sep" v-if="crumbs.length">/</span>
@@ -76,8 +76,11 @@ async function newFile() {
   gap: 4px;
   overflow-x: auto;
   white-space: nowrap;
-  padding: 0 36px;
+  padding: 0 36px 0 38px;
   line-height: 34px;
+}
+.navbar.no-sidebar-btn {
+  padding-left: 10px;
 }
 .icon-btn {
   position: absolute;

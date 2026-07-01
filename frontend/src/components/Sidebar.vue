@@ -47,9 +47,8 @@
     </div>
     <div class="sidebar-footer">
       <div class="settings-row" @click="openSettingsModal" role="button" tabindex="0" @keydown.enter="openSettingsModal">
-        <svg class="settings-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="8" cy="8" r="2.3"/>
-          <path d="M8 1.5v2.2M8 12.3v2.2M1.5 8h2.2M12.3 8h2.2M3.5 3.5l1.5 1.5M11 11l1.5 1.5M3.5 12.5l1.5-1.5M11 5l1.5-1.5"/>
+        <svg class="settings-icon" width="15" height="15" viewBox="0 0 16 16" fill="currentColor" stroke="none">
+          <path fill-rule="evenodd" d="M12.33 5.5L14.76 6.19L14.76 9.81L12.33 10.5L12.95 12.95L9.81 14.76L8 13L6.19 14.76L3.05 12.95L3.67 10.5L1.24 9.81L1.24 6.19L3.67 5.5L3.05 3.05L6.19 1.24L8 3L9.81 1.24L12.95 3.05Z M8 5.8A2.2 2.2 0 1 1 8 10.2A2.2 2.2 0 1 1 8 5.8Z"/>
         </svg>
         <span>Settings</span>
       </div>
