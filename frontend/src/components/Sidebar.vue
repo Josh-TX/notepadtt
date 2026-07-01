@@ -483,7 +483,15 @@ function doDownloadFile(file) {
 
 async function doNewFile(folder) {
   menuFolder.value = null
-  await createFile(folder.path)
+  const data = await createFile(folder.path)
+  if (folder.path === store.currentFolderPath) {
+    store.fileContents[data.fileId] = data.content
+    setFileVersion(data.fileId, data.versionId)
+    setActiveFile(data.fileId)
+  } else {
+    store.pendingFileId = data.fileId
+    router.push(folder.path ? '/' + folder.path : '/')
+  }
 }
 
 async function doNewFolder(folder) {
