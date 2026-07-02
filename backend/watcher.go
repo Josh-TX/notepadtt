@@ -1,7 +1,6 @@
 package backend
 
 import (
-	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -29,13 +28,8 @@ func StartWatcher(root string, db *DB, hub *Hub) error {
 
 	wt := &Watcher{root: root, db: db, hub: hub, w: w, pending: map[string]string{}}
 
-	// add root and all subdirs
-	filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err == nil && d.IsDir() {
-			w.Add(path)
-		}
-		return nil
-	})
+	// add root and all subdirs, following directory symlinks
+	wt.addTreeWatches(root, map[string]bool{})
 
 	go wt.loop()
 	return nil
@@ -78,7 +72,8 @@ func (wt *Watcher) handle(event fsnotify.Event) {
 			return
 		}
 		if info.IsDir() {
-			wt.w.Add(path)
+			// follow symlinks and pick up any pre-existing nested content
+			wt.addTreeWatches(path, map[string]bool{})
 			// check for pending rename that created this dir - not common, skip
 			wt.broadcastTree("watcher: dir created")
 			return
@@ -147,6 +142,35 @@ func (wt *Watcher) handle(event fsnotify.Event) {
 		if f, _ := wt.db.GetFileByPath(rel); f != nil {
 			wt.db.TrashFile(f.FileId, f.Path, f.Content, time.Now().UnixMilli())
 			wt.broadcastTree("watcher: file removed")
+		}
+	}
+}
+
+// addTreeWatches adds a watch on dir and recurses into its entries, following
+// directory symlinks. visited tracks resolved real paths already watched in
+// this call so symlink cycles (e.g. a dir symlinked to an ancestor) terminate.
+func (wt *Watcher) addTreeWatches(dir string, visited map[string]bool) {
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil || visited[real] {
+		return
+	}
+	visited[real] = true
+	wt.w.Add(dir)
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		childPath := filepath.Join(dir, e.Name())
+		if e.IsDir() {
+			wt.addTreeWatches(childPath, visited)
+			continue
+		}
+		if e.Type()&os.ModeSymlink != 0 {
+			if info, err := os.Stat(childPath); err == nil && info.IsDir() {
+				wt.addTreeWatches(childPath, visited)
+			}
 		}
 	}
 }
