@@ -344,6 +344,10 @@ function hasNameConflict(targetPath, name) {
 }
 
 async function handleFileDrop(item, targetPath) {
+  if (hasNameConflict(targetPath, item.name)) {
+    showToast(`File named "${item.name}" already exists in ${targetPath || 'root'}`, 'error')
+    return
+  }
   const newPath = targetPath ? targetPath + '/' + item.name : item.name
   try {
     const data = await moveFile(item.fileId, newPath)
