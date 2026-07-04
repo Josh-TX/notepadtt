@@ -2,6 +2,7 @@ package backend
 
 import (
 	"io/fs"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -13,6 +14,7 @@ type FileNode struct {
 	Path       string `json:"path"`
 	LastOpened int64  `json:"lastOpened"`
 	OrderNum   int    `json:"orderNum"`
+	IsLink     bool   `json:"isLink"`
 }
 
 type FolderNode struct {
@@ -20,12 +22,13 @@ type FolderNode struct {
 	Path    string       `json:"path"`
 	Files   []FileNode   `json:"files"`
 	Folders []FolderNode `json:"folders"`
+	IsLink  bool         `json:"isLink"`
 }
 
 func BuildTree(files []DBFile, rootDir string) FolderNode {
 	root := FolderNode{Name: "", Path: "", Files: []FileNode{}, Folders: []FolderNode{}}
 	for _, f := range files {
-		insertIntoTree(&root, f)
+		insertIntoTree(&root, f, rootDir)
 	}
 	walkFollowSymlinks(rootDir, func(path string) error {
 		rel, relErr := filepath.Rel(rootDir, path)
@@ -36,14 +39,24 @@ func BuildTree(files []DBFile, rootDir string) FolderNode {
 		if strings.HasPrefix(filepath.Base(path), ".") {
 			return fs.SkipDir
 		}
-		ensureFolderInTree(&root, rel)
+		ensureFolderInTree(&root, rel, isSymlink(path))
 		return nil
 	}, nil)
 	sortTree(&root)
 	return root
 }
 
-func ensureFolderInTree(node *FolderNode, relPath string) {
+// isSymlink reports whether path itself (not its target) is a symlink.
+func isSymlink(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && info.Mode()&os.ModeSymlink != 0
+}
+
+// ensureFolderInTree walks/creates the folder chain for relPath. isLink describes
+// only the deepest (final) segment - the actual directory walkFollowSymlinks
+// visited - since intermediate ancestors implicitly created along the way are
+// always real directories reached earlier in the same walk.
+func ensureFolderInTree(node *FolderNode, relPath string, isLink bool) {
 	parts := strings.SplitN(relPath, "/", 2)
 	subName := parts[0]
 	var subPath string
@@ -64,12 +77,14 @@ func ensureFolderInTree(node *FolderNode, relPath string) {
 		sub = &node.Folders[len(node.Folders)-1]
 	}
 	if len(parts) > 1 {
-		ensureFolderInTree(sub, parts[1])
+		ensureFolderInTree(sub, parts[1], isLink)
+	} else {
+		sub.IsLink = isLink
 	}
 }
 
 
-func insertIntoTree(node *FolderNode, f DBFile) {
+func insertIntoTree(node *FolderNode, f DBFile, rootDir string) {
 	dir := filepath.Dir(f.Path)
 	if dir == "." {
 		dir = ""
@@ -82,6 +97,7 @@ func insertIntoTree(node *FolderNode, f DBFile) {
 			Path:       f.Path,
 			LastOpened: f.LastOpened,
 			OrderNum:   f.OrderNum,
+			IsLink:     isSymlink(filepath.Join(rootDir, filepath.FromSlash(f.Path))),
 		})
 		return
 	}
@@ -102,13 +118,13 @@ func insertIntoTree(node *FolderNode, f DBFile) {
 
 	for i := range node.Folders {
 		if node.Folders[i].Path == subPath {
-			insertIntoTree(&node.Folders[i], f)
+			insertIntoTree(&node.Folders[i], f, rootDir)
 			return
 		}
 	}
 	newFolder := FolderNode{Name: subName, Path: subPath, Files: []FileNode{}, Folders: []FolderNode{}}
 	node.Folders = append(node.Folders, newFolder)
-	insertIntoTree(&node.Folders[len(node.Folders)-1], f)
+	insertIntoTree(&node.Folders[len(node.Folders)-1], f, rootDir)
 }
 
 func sortTree(node *FolderNode) {

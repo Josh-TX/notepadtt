@@ -57,3 +57,43 @@ func TestWatcher_FollowsFolderSymlink(t *testing.T) {
 	}
 	t.Fatalf("db content was not updated after host edit through symlinked folder")
 }
+
+// Creating a new symlink to a folder while the server is running should
+// immediately track any pre-existing files reached through it, not just wait
+// for a future restart's startupScan.
+func TestWatcher_TracksExistingFilesInNewlyCreatedSymlink(t *testing.T) {
+	root := t.TempDir()
+	target := t.TempDir()
+
+	if err := os.MkdirAll(filepath.Join(target, "nested"), 0755); err != nil {
+		t.Fatalf("mkdir nested: %v", err)
+	}
+	notePath := filepath.Join(target, "nested", "note.txt")
+	if err := os.WriteFile(notePath, []byte("hello"), 0644); err != nil {
+		t.Fatalf("write note: %v", err)
+	}
+
+	db, err := NewDB(root)
+	if err != nil {
+		t.Fatalf("NewDB: %v", err)
+	}
+	hub := NewHub()
+	if err := StartWatcher(root, db, hub); err != nil {
+		t.Fatalf("StartWatcher: %v", err)
+	}
+
+	// symlink created live, after the watcher is already running
+	if err := os.Symlink(target, filepath.Join(root, "linked")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		f, _ := db.GetFileByPath("linked/nested/note.txt")
+		if f != nil && f.Content == "hello" {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("file inside newly created symlinked folder was not tracked")
+}

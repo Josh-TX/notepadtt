@@ -74,6 +74,14 @@ func (wt *Watcher) handle(event fsnotify.Event) {
 		if info.IsDir() {
 			// follow symlinks and pick up any pre-existing nested content
 			wt.addTreeWatches(path)
+			if isSymlink(path) {
+				// A real directory copied in fires its own Create event for each
+				// nested file as the OS writes them, so those get tracked via the
+				// non-dir case below. A symlink is created atomically - nothing
+				// else will fire for files that already exist at its target, so
+				// scan it now to pick them up.
+				wt.trackExistingFiles(path)
+			}
 			// check for pending rename that created this dir - not common, skip
 			wt.broadcastTree("watcher: dir created")
 			return
@@ -153,6 +161,23 @@ func (wt *Watcher) addTreeWatches(dir string) {
 		wt.w.Add(d)
 		return nil
 	}, nil)
+}
+
+// trackExistingFiles walks dir (following symlinks) and tracks any allowed
+// file that isn't already in the DB, so pre-existing content revealed by a
+// newly created symlink shows up immediately instead of only after restart.
+func (wt *Watcher) trackExistingFiles(dir string) {
+	walkFollowSymlinks(dir, nil, func(path string) error {
+		rel, err := filepath.Rel(wt.root, path)
+		if err != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if wt.db.IsAllowedPath(rel) && !wt.db.IsTracked(rel) {
+			wt.db.EnsureFileTracked(rel)
+		}
+		return nil
+	})
 }
 
 func (wt *Watcher) broadcastTree(reason string) {

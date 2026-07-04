@@ -16,7 +16,7 @@
           <polyline points="6,4 10,8 6,12"/>
         </svg>
       </span>
-      <span class="tree-label">{{ label }}</span>
+      <span class="tree-label">{{ label }}<span v-if="node.isLink" class="link-indicator" title="Symlink">🔗</span></span>
       <button class="open-btn" @click.stop="$emit('open-folder', node.path ?? '')" title="Open folder">⤴</button>
     </div>
 
@@ -40,7 +40,7 @@
             <polyline points="6,4 10,8 6,12"/>
           </svg>
         </span>
-        <span class="tree-label">{{ folder.name }}</span>
+        <span class="tree-label">{{ folder.name }}<span v-if="folder.isLink" class="link-indicator" title="Symlink">🔗</span></span>
         <button class="open-btn" @click.stop="$emit('open-folder', folder.path)" title="Open folder">⤴</button>
       </div>
       <FileTree
@@ -67,7 +67,7 @@
         @dragstart="onFileDragStart($event, file)"
         @dragend="onItemDragEnd"
       >
-        <span class="tree-label">{{ file.name }}</span>
+        <span class="tree-label">{{ file.name }}<span v-if="file.isLink" class="link-indicator" title="Symlink">🔗</span></span>
       </div>
     </li>
     </ul>
@@ -146,6 +146,7 @@ function onItemDragEnd() {
 .file-row { padding-left: 8px; margin-left: 10px; }
 .tree-icon { color: #aaa; width: 14px; flex-shrink: 0; display: flex; align-items: center; }
 .tree-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-indicator { flex-shrink: 0; font-size: 13px; opacity: 0.8; margin-left: 3px; }
 .open-btn {
   display: none;
   align-items: center;
