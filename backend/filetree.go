@@ -27,21 +27,18 @@ func BuildTree(files []DBFile, rootDir string) FolderNode {
 	for _, f := range files {
 		insertIntoTree(&root, f)
 	}
-	filepath.WalkDir(rootDir, func(path string, de fs.DirEntry, err error) error {
-		if err != nil || !de.IsDir() {
-			return nil
-		}
+	walkFollowSymlinks(rootDir, func(path string) error {
 		rel, relErr := filepath.Rel(rootDir, path)
 		if relErr != nil || rel == "." {
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
-		if strings.HasPrefix(de.Name(), ".") {
+		if strings.HasPrefix(filepath.Base(path), ".") {
 			return fs.SkipDir
 		}
 		ensureFolderInTree(&root, rel)
 		return nil
-	})
+	}, nil)
 	sortTree(&root)
 	return root
 }

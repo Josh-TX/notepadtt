@@ -516,9 +516,17 @@ async function doDeleteFolder(folder) {
   menuFolder.value = null
   if (!confirm(`Delete folder "${folder.name}" and all its contents? Text files will be moved to trash.`)) return
   const result = await deleteFolder(folder.path)
-  if (result?.untrackedCount > 0) {
-    const n = result.untrackedCount
-    if (!confirm(`This folder contains ${n} non-text file${n === 1 ? '' : 's'} that cannot be recovered after deletion. Delete anyway?`)) return
+  if (result?.untrackedCount > 0 || result?.symlinkCount > 0) {
+    const parts = []
+    if (result.untrackedCount > 0) {
+      const n = result.untrackedCount
+      parts.push(`${n} non-text file${n === 1 ? '' : 's'} that cannot be recovered after deletion`)
+    }
+    if (result.symlinkCount > 0) {
+      const n = result.symlinkCount
+      parts.push(`${n} symlink${n === 1 ? '' : 's'} (only the link will be removed; the linked content is untouched)`)
+    }
+    if (!confirm(`This folder contains ${parts.join(' and ')}. Delete anyway?`)) return
     await deleteFolder(folder.path, true)
   }
   // if current folder was inside deleted folder, navigate up

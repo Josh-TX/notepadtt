@@ -3,7 +3,6 @@ package backend
 import (
 	"database/sql"
 	"fmt"
-	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -152,13 +151,7 @@ func (d *DB) startupScan() error {
 	}
 	var pending []pendingInsert
 
-	err = filepath.WalkDir(d.root, func(path string, de fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if de.IsDir() {
-			return nil
-		}
+	err = walkFollowSymlinks(d.root, nil, func(path string) error {
 		rel, _ := filepath.Rel(d.root, path)
 		rel = filepath.ToSlash(rel)
 
@@ -168,7 +161,7 @@ func (d *DB) startupScan() error {
 		}
 
 		diskPaths[rel] = true
-		info, err := de.Info()
+		info, err := os.Stat(path)
 		if err != nil {
 			return nil
 		}

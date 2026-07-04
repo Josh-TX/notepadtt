@@ -453,15 +453,15 @@ func (s *Server) handleDeleteFolder(w http.ResponseWriter, r *http.Request) {
 
 	force := r.URL.Query().Get("force") == "true"
 	if !force {
-		count, err := s.countUntrackedFilesInFolder(body.Path)
+		untracked, symlinks, err := s.countUntrackedFilesInFolder(body.Path)
 		if err != nil {
 			http.Error(w, err.Error(), 500)
 			return
 		}
-		if count > 0 {
+		if untracked > 0 || symlinks > 0 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict)
-			json.NewEncoder(w).Encode(map[string]int{"untrackedCount": count})
+			json.NewEncoder(w).Encode(map[string]int{"untrackedCount": untracked, "symlinkCount": symlinks})
 			return
 		}
 	}
@@ -484,23 +484,35 @@ func (s *Server) handleDeleteFolder(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) countUntrackedFilesInFolder(folderRelPath string) (int, error) {
+// countUntrackedFilesInFolder reports, for a folder about to be deleted, how
+// many real non-text files would be permanently lost (untracked) and how many
+// symlinks would merely be unlinked. Symlinks are counted separately because
+// deleting a folder never follows them - os.RemoveAll unlinks a symlink entry
+// without touching whatever it points to - so their target content is never
+// actually at risk, unlike genuine untracked files.
+func (s *Server) countUntrackedFilesInFolder(folderRelPath string) (untracked int, symlinks int, err error) {
 	diskPath := filepath.Join(s.root, filepath.FromSlash(folderRelPath))
-	count := 0
-	err := filepath.Walk(diskPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+	err = filepath.Walk(diskPath, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
 			return nil
 		}
-		relPath, err := filepath.Rel(s.root, path)
-		if err != nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			symlinks++
+			return nil
+		}
+		if info.IsDir() {
+			return nil
+		}
+		relPath, relErr := filepath.Rel(s.root, path)
+		if relErr != nil {
 			return nil
 		}
 		if !s.db.IsAllowedPath(filepath.ToSlash(relPath)) {
-			count++
+			untracked++
 		}
 		return nil
 	})
-	return count, err
+	return
 }
 
 // handleListTrash returns every trashed file as a lightweight summary (no content),

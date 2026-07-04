@@ -223,6 +223,57 @@ func TestHandleDeleteFolder_TrashesContainedFiles(t *testing.T) {
 	}
 }
 
+// A folder containing a symlink should warn about the symlink specifically
+// (via symlinkCount), not lump it into untrackedCount's "non-text files that
+// cannot be recovered" - deleting a folder never follows symlinks, so the
+// linked content is never actually at risk, unlike a genuine untracked file.
+func TestHandleDeleteFolder_ConflictDistinguishesSymlinksFromUntracked(t *testing.T) {
+	s := newTestServer(t)
+	target := t.TempDir()
+	if err := os.WriteFile(filepath.Join(target, "external.txt"), []byte("safe"), 0644); err != nil {
+		t.Fatalf("write external file: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(s.root, "sub"), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	createTestFile(t, s, "sub/a.txt", "one")
+	if err := os.WriteFile(filepath.Join(s.root, "sub", "photo.png"), []byte("binary"), 0644); err != nil {
+		t.Fatalf("write photo: %v", err)
+	}
+	if err := os.Symlink(target, filepath.Join(s.root, "sub", "linked")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	req := httptest.NewRequest("DELETE", "/api/folders", strings.NewReader(`{"path":"sub"}`))
+	w := httptest.NewRecorder()
+	s.handleDeleteFolder(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]int
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body["untrackedCount"] != 1 {
+		t.Fatalf("expected untrackedCount=1 (photo.png), got %+v", body)
+	}
+	if body["symlinkCount"] != 1 {
+		t.Fatalf("expected symlinkCount=1 (linked), got %+v", body)
+	}
+
+	// the external target's content must survive even after a forced delete
+	req = httptest.NewRequest("DELETE", "/api/folders?force=true", strings.NewReader(`{"path":"sub"}`))
+	w = httptest.NewRecorder()
+	s.handleDeleteFolder(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(target, "external.txt")); err != nil {
+		t.Fatalf("expected symlink target content to survive folder deletion, stat err=%v", err)
+	}
+}
+
 func restoreTestFile(t *testing.T, s *Server, fileId string) map[string]string {
 	t.Helper()
 	req := httptest.NewRequest("POST", "/api/trash/"+fileId+"/restore", nil)
