@@ -101,29 +101,19 @@ func (wt *Watcher) handle(event fsnotify.Event) {
 				// An API handler already wrote this file and is tracking it in the DB.
 				return
 			}
-			if wt.db.IsAllowedPath(rel) || wt.db.IsTracked(rel) {
+			if wt.db.IsTracked(rel) {
+				// An atomic save (temp file + rename) landed on an already-tracked
+				// path from an untracked source name, so it never matched wt.pending
+				// above. Treat it like a Write: re-read and broadcast the new content.
+				wt.syncContent(rel, path)
+			} else if wt.db.IsAllowedPath(rel) {
 				wt.db.EnsureFileTracked(rel)
 			}
 		}
 		wt.broadcastTree("watcher: file created or rename dest")
 
 	case event.Has(fsnotify.Write):
-		f, _ := wt.db.GetFileByPath(rel)
-		if f == nil {
-			return
-		}
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return
-		}
-		if string(content) == f.Content {
-			return
-		}
-		wt.hub.Versions.Add(f.FileId, f.VersionId, f.Path, f.Content)
-		versionId := uniqueId(5)
-		wt.db.UpdateContentAndVersion(f.FileId, string(content), versionId)
-		wt.hub.Versions.Add(f.FileId, versionId, f.Path, string(content))
-		wt.hub.BroadcastContent(f.FileId, string(content), versionId, "", "watcher: file written on disk")
+		wt.syncContent(rel, path)
 
 	case event.Has(fsnotify.Rename):
 		f, _ := wt.db.GetFileByPath(rel)
@@ -152,6 +142,29 @@ func (wt *Watcher) handle(event fsnotify.Event) {
 			wt.broadcastTree("watcher: file removed")
 		}
 	}
+}
+
+// syncContent re-reads path from disk and, if its content differs from what's
+// tracked for rel, records a version and broadcasts the update. Used for both
+// plain Write events and Create events that turn out to be an atomic-save
+// rename landing on an already-tracked path.
+func (wt *Watcher) syncContent(rel, path string) {
+	f, _ := wt.db.GetFileByPath(rel)
+	if f == nil {
+		return
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	if string(content) == f.Content {
+		return
+	}
+	wt.hub.Versions.Add(f.FileId, f.VersionId, f.Path, f.Content)
+	versionId := uniqueId(5)
+	wt.db.UpdateContentAndVersion(f.FileId, string(content), versionId)
+	wt.hub.Versions.Add(f.FileId, versionId, f.Path, string(content))
+	wt.hub.BroadcastContent(f.FileId, string(content), versionId, "", "watcher: file written on disk")
 }
 
 // addTreeWatches adds a watch on dir and recurses into its entries, following
