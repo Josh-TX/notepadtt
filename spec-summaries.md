@@ -100,3 +100,8 @@ Adds a "Move" context menu item (after "Rename") in both the TabBar and FileTree
 Date: 2026-06-29
 
 Adds CodeMirror 5 syntax highlighting for a curated set of languages (JavaScript/TypeScript/JSON, Python, Markdown, YAML, HTML, CSS, Shell, SQL), detected automatically from the filename via `findModeByFileName`. Introduces a new `MarkdownMode` int setting (0=all new files, 1=all files without an extension, 2=only .md files) controlling when markdown highlighting applies to files with no recognized extension. The active language is displayed as a text label in the Footer on wide (≥768px) viewports, showing "text" for plain files.
+
+# Sqlite Regex Search
+Date: 2026-07-26
+
+Removes SQLite FTS5 from search entirely (dropping all FTS5 virtual tables, shadow tables, and sync/trigger code) in favor of querying the existing `files`/`FileVersions`/`FileTrash` tables directly, since FTS5 was overkill for small workspaces. Adds a persistent "regex" checkbox to SearchModal: non-regex mode keeps today's whitespace-split OR'd terms but switches matching to SQL `LIKE` narrowing (benchmarked ~2.6-3.2x faster than a Go-side loop), while regex mode runs a per-line Go `regexp` match with no cross-line matching. Replaces bm25 ranking with a manually computed score (occurrence counts weighted by path/content and by source, plus a distinct-term multiplier in non-regex mode) that merges and sorts all three sources into one ranked list.
