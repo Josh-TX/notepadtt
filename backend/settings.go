@@ -8,8 +8,8 @@ import (
 
 // Settings is the single persisted, app-wide settings record: one row, one column
 // per field. TabCloseIcon is read by TabBar.vue (frontend) to decide whether to show
-// a tab's close icon — see specs/settings.md. WordWrap, the 9 duration fields (TrashTTL
-// + the 8 File History TTL/MinDelay values), and the search fields below are also live.
+// a tab's close icon — see specs/settings.md. WordWrap, the 7 duration fields (TrashTTL
+// + the 6 File History TTL/MinDelay values), and the search fields below are also live.
 type Settings struct {
 	TabCloseIcon      string `json:"tabCloseIcon"` // "visible" | "hidden" | "new"
 	WordWrap          bool   `json:"wordWrap"`     // global word wrap toggle; also updatable via PUT /api/settings/wordwrap
@@ -20,14 +20,12 @@ type Settings struct {
 
 	TrashTTL string `json:"trashTTL"`
 
-	ShortTermTTL         string `json:"shortTermTTL"`
-	ShortTermMinDelay    string `json:"shortTermMinDelay"`
-	MedTermTTL           string `json:"medTermTTL"`
-	MedTermMinDelay      string `json:"medTermMinDelay"`
-	LongTermTTL          string `json:"longTermTTL"`
-	LongTermMinDelay     string `json:"longTermMinDelay"`
-	VeryLongTermTTL      string `json:"veryLongTermTTL"`
-	VeryLongTermMinDelay string `json:"veryLongTermMinDelay"`
+	ShortTermTTL      string `json:"shortTermTTL"`
+	ShortTermMinDelay string `json:"shortTermMinDelay"`
+	MedTermTTL        string `json:"medTermTTL"`
+	MedTermMinDelay   string `json:"medTermMinDelay"`
+	LongTermTTL       string `json:"longTermTTL"`
+	LongTermMinDelay  string `json:"longTermMinDelay"`
 
 	EditorFontSize     int    `json:"editorFontSize"`     // px; clamped to [10,24] on save
 	SidebarWidth       int    `json:"sidebarWidth"`       // px; not editable via the Settings modal — see UpdateSidebarWidth/PUT /api/settings/sidebarwidth
@@ -48,14 +46,12 @@ func defaultSettings() Settings {
 
 		TrashTTL: "30d",
 
-		ShortTermTTL:         "10m",
-		ShortTermMinDelay:    "40s",
-		MedTermTTL:           "120m",
-		MedTermMinDelay:      "8m",
-		LongTermTTL:          "7d",
-		LongTermMinDelay:     "18h",
-		VeryLongTermTTL:      "60d",
-		VeryLongTermMinDelay: "5d",
+		ShortTermTTL:      "10m",
+		ShortTermMinDelay: "40s",
+		MedTermTTL:        "120m",
+		MedTermMinDelay:   "8m",
+		LongTermTTL:       "7d",
+		LongTermMinDelay:  "18h",
 
 		EditorFontSize:     14,
 		SidebarWidth:       400,
@@ -82,8 +78,6 @@ func createSettingsSchema(sqldb *sql.DB) error {
 		MedTermMinDelay TEXT,
 		LongTermTTL TEXT,
 		LongTermMinDelay TEXT,
-		VeryLongTermTTL TEXT,
-		VeryLongTermMinDelay TEXT,
 		EditorFontSize INTEGER,
 		SidebarWidth INTEGER,
 		DesktopSidebarOpen INTEGER,
@@ -108,12 +102,12 @@ func insertSettingsRow(sqldb *sql.DB, s Settings) error {
 	_, err := sqldb.Exec(`INSERT INTO Settings (
 		TabCloseIcon, WordWrap, CtrlFSearch,
 		LinesPerResult, MaxResultsPerFile, MaxFiles, TrashTTL, ShortTermTTL, ShortTermMinDelay,
-		MedTermTTL, MedTermMinDelay, LongTermTTL, LongTermMinDelay, VeryLongTermTTL, VeryLongTermMinDelay,
+		MedTermTTL, MedTermMinDelay, LongTermTTL, LongTermMinDelay,
 		EditorFontSize, SidebarWidth, DesktopSidebarOpen, MarkdownMode, ColorOverrides, Title
-	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		s.TabCloseIcon, s.WordWrap, s.CtrlFSearch,
 		s.LinesPerResult, s.MaxResultsPerFile, s.MaxFiles, s.TrashTTL, s.ShortTermTTL, s.ShortTermMinDelay,
-		s.MedTermTTL, s.MedTermMinDelay, s.LongTermTTL, s.LongTermMinDelay, s.VeryLongTermTTL, s.VeryLongTermMinDelay,
+		s.MedTermTTL, s.MedTermMinDelay, s.LongTermTTL, s.LongTermMinDelay,
 		s.EditorFontSize, s.SidebarWidth, s.DesktopSidebarOpen, s.MarkdownMode, s.ColorOverrides, s.Title)
 	return err
 }
@@ -125,12 +119,12 @@ func (d *DB) GetSettings() (Settings, error) {
 	err := d.sql.QueryRow(`SELECT
 		TabCloseIcon, WordWrap, CtrlFSearch,
 		LinesPerResult, MaxResultsPerFile, MaxFiles, TrashTTL, ShortTermTTL, ShortTermMinDelay,
-		MedTermTTL, MedTermMinDelay, LongTermTTL, LongTermMinDelay, VeryLongTermTTL, VeryLongTermMinDelay,
+		MedTermTTL, MedTermMinDelay, LongTermTTL, LongTermMinDelay,
 		EditorFontSize, SidebarWidth, DesktopSidebarOpen, MarkdownMode, ColorOverrides, Title
 		FROM Settings LIMIT 1`).
 		Scan(&s.TabCloseIcon, &s.WordWrap, &s.CtrlFSearch,
 			&s.LinesPerResult, &s.MaxResultsPerFile, &s.MaxFiles, &s.TrashTTL, &s.ShortTermTTL, &s.ShortTermMinDelay,
-			&s.MedTermTTL, &s.MedTermMinDelay, &s.LongTermTTL, &s.LongTermMinDelay, &s.VeryLongTermTTL, &s.VeryLongTermMinDelay,
+			&s.MedTermTTL, &s.MedTermMinDelay, &s.LongTermTTL, &s.LongTermMinDelay,
 			&s.EditorFontSize, &s.SidebarWidth, &s.DesktopSidebarOpen, &s.MarkdownMode, &s.ColorOverrides, &s.Title)
 	return s, err
 }
@@ -146,11 +140,11 @@ func (d *DB) SaveSettings(s Settings) error {
 	_, err := d.sql.Exec(`UPDATE Settings SET
 		TabCloseIcon=?, WordWrap=?, CtrlFSearch=?,
 		LinesPerResult=?, MaxResultsPerFile=?, MaxFiles=?, TrashTTL=?, ShortTermTTL=?, ShortTermMinDelay=?,
-		MedTermTTL=?, MedTermMinDelay=?, LongTermTTL=?, LongTermMinDelay=?, VeryLongTermTTL=?, VeryLongTermMinDelay=?,
+		MedTermTTL=?, MedTermMinDelay=?, LongTermTTL=?, LongTermMinDelay=?,
 		EditorFontSize=?, SidebarWidth=?, DesktopSidebarOpen=?, MarkdownMode=?, ColorOverrides=?, Title=?`,
 		s.TabCloseIcon, s.WordWrap, s.CtrlFSearch,
 		s.LinesPerResult, s.MaxResultsPerFile, s.MaxFiles, s.TrashTTL, s.ShortTermTTL, s.ShortTermMinDelay,
-		s.MedTermTTL, s.MedTermMinDelay, s.LongTermTTL, s.LongTermMinDelay, s.VeryLongTermTTL, s.VeryLongTermMinDelay,
+		s.MedTermTTL, s.MedTermMinDelay, s.LongTermTTL, s.LongTermMinDelay,
 		s.EditorFontSize, s.SidebarWidth, s.DesktopSidebarOpen, s.MarkdownMode, s.ColorOverrides, s.Title)
 	return err
 }
@@ -206,7 +200,6 @@ func validateSettings(s Settings) error {
 		{"shortTermTTL", s.ShortTermTTL}, {"shortTermMinDelay", s.ShortTermMinDelay},
 		{"medTermTTL", s.MedTermTTL}, {"medTermMinDelay", s.MedTermMinDelay},
 		{"longTermTTL", s.LongTermTTL}, {"longTermMinDelay", s.LongTermMinDelay},
-		{"veryLongTermTTL", s.VeryLongTermTTL}, {"veryLongTermMinDelay", s.VeryLongTermMinDelay},
 	}
 	parsed := map[string]int64{}
 	for _, d := range durations {
@@ -218,14 +211,12 @@ func validateSettings(s Settings) error {
 	}
 
 	if !(parsed["shortTermTTL"] < parsed["medTermTTL"] &&
-		parsed["medTermTTL"] < parsed["longTermTTL"] &&
-		parsed["longTermTTL"] < parsed["veryLongTermTTL"]) {
-		return fmt.Errorf("TTL tiers must be strictly increasing: shortTermTTL < medTermTTL < longTermTTL < veryLongTermTTL")
+		parsed["medTermTTL"] < parsed["longTermTTL"]) {
+		return fmt.Errorf("TTL tiers must be strictly increasing: shortTermTTL < medTermTTL < longTermTTL")
 	}
 	if !(parsed["shortTermMinDelay"] < parsed["medTermMinDelay"] &&
-		parsed["medTermMinDelay"] < parsed["longTermMinDelay"] &&
-		parsed["longTermMinDelay"] < parsed["veryLongTermMinDelay"]) {
-		return fmt.Errorf("MinDelay tiers must be strictly increasing: shortTermMinDelay < medTermMinDelay < longTermMinDelay < veryLongTermMinDelay")
+		parsed["medTermMinDelay"] < parsed["longTermMinDelay"]) {
+		return fmt.Errorf("MinDelay tiers must be strictly increasing: shortTermMinDelay < medTermMinDelay < longTermMinDelay")
 	}
 
 	if s.LinesPerResult < 1 {

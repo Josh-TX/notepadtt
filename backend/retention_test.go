@@ -61,7 +61,7 @@ func recentAt(fileId, versionId, path, content string, at time.Time) recentVersi
 
 // The very first snapshot ever taken for a file has no prior watermark at any tier,
 // so the gap against every tier is "infinite" and it should be promoted straight to
-// the top tier (4) rather than starting conservatively at 1.
+// the top tier (3) rather than starting conservatively at 1.
 func TestAssignTermsForFile_FirstEntryGetsTopTerm(t *testing.T) {
 	base := time.Now()
 	entries := []recentVersion{recentAt("f1", "v1", "a.txt", "hello", base)}
@@ -71,11 +71,11 @@ func TestAssignTermsForFile_FirstEntryGetsTopTerm(t *testing.T) {
 	if len(out) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(out))
 	}
-	if out[0].Term != 4 {
-		t.Fatalf("expected Term=4 for first-ever entry, got %d", out[0].Term)
+	if out[0].Term != 3 {
+		t.Fatalf("expected Term=3 for first-ever entry, got %d", out[0].Term)
 	}
-	if last[3] != base.UnixMilli() {
-		t.Fatalf("expected last[3] updated to base, got %d", last[3])
+	if last[2] != base.UnixMilli() {
+		t.Fatalf("expected last[2] updated to base, got %d", last[2])
 	}
 }
 
@@ -97,13 +97,12 @@ func TestAssignTermsForFile_TooSoonSkipped(t *testing.T) {
 func TestAssignTermsForFile_ShortTermOnly(t *testing.T) {
 	entryTime := time.Now()
 	var last lastVersionDates
-	// Tier 1 watermark old enough to clear ShortTermMinDelay; tiers 2-4 watermarks
+	// Tier 1 watermark old enough to clear ShortTermMinDelay; tiers 2-3 watermarks
 	// recent (as a real prior promotion to Term>=2 would leave them), too recent to
 	// clear MedTermMinDelay.
 	last[0] = entryTime.Add(-(ShortTermMinDelay + time.Second)).UnixMilli()
 	last[1] = entryTime.Add(-time.Second).UnixMilli()
 	last[2] = last[1]
-	last[3] = last[1]
 
 	entries := []recentVersion{recentAt("f1", "v2", "a.txt", "world", entryTime)}
 	out := assignTermsForFile(entries, &last)
@@ -119,7 +118,6 @@ func TestAssignTermsForFile_PromotesToMedium(t *testing.T) {
 	last[0] = entryTime.Add(-(MedTermMinDelay + time.Second)).UnixMilli()
 	last[1] = last[0]
 	last[2] = entryTime.Add(-time.Second).UnixMilli()
-	last[3] = last[2]
 
 	entries := []recentVersion{recentAt("f1", "v2", "a.txt", "world", entryTime)}
 	out := assignTermsForFile(entries, &last)
@@ -128,32 +126,16 @@ func TestAssignTermsForFile_PromotesToMedium(t *testing.T) {
 	}
 }
 
-// Gap clears LongTermMinDelay but not VeryLongTermMinDelay: row promotes to Term=3.
+// Gap clears even LongTermMinDelay: row promotes all the way to Term=3.
 func TestAssignTermsForFile_PromotesToLong(t *testing.T) {
-	entryTime := time.Now()
+	base := time.Now()
 	var last lastVersionDates
-	last[0] = entryTime.Add(-(LongTermMinDelay + time.Minute)).UnixMilli()
-	last[1] = last[0]
-	last[2] = last[0]
-	last[3] = entryTime.Add(-time.Minute).UnixMilli()
+	last[0], last[1], last[2] = base.UnixMilli(), base.UnixMilli(), base.UnixMilli()
 
-	entries := []recentVersion{recentAt("f1", "v2", "a.txt", "world", entryTime)}
+	entries := []recentVersion{recentAt("f1", "v2", "a.txt", "world", base.Add(LongTermMinDelay+time.Hour))}
 	out := assignTermsForFile(entries, &last)
 	if len(out) != 1 || out[0].Term != 3 {
 		t.Fatalf("expected single Term=3 row, got %+v", out)
-	}
-}
-
-// Gap clears even VeryLongTermMinDelay: row promotes all the way to Term=4.
-func TestAssignTermsForFile_PromotesToVeryLong(t *testing.T) {
-	base := time.Now()
-	var last lastVersionDates
-	last[0], last[1], last[2], last[3] = base.UnixMilli(), base.UnixMilli(), base.UnixMilli(), base.UnixMilli()
-
-	entries := []recentVersion{recentAt("f1", "v2", "a.txt", "world", base.Add(VeryLongTermMinDelay+time.Hour))}
-	out := assignTermsForFile(entries, &last)
-	if len(out) != 1 || out[0].Term != 4 {
-		t.Fatalf("expected single Term=4 row, got %+v", out)
 	}
 }
 

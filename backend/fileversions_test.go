@@ -9,19 +9,19 @@ import (
 )
 
 // DeleteExpiredFileVersions selects each row's TTL by its own Term, so a Term=1 row
-// past ShortTermTTL is deleted while a Term=4 row at the same age survives. Uses
+// past ShortTermTTL is deleted while a Term=3 row at the same age survives. Uses
 // distinct FileIds so the cumulative Term>=1 threshold on one file's surviving
-// Term=4 row can't be mistaken for the other file's deleted Term=1 row.
+// Term=3 row can't be mistaken for the other file's deleted Term=1 row.
 func TestDeleteExpiredFileVersions_PerTermTTL(t *testing.T) {
 	db := newTestDB(t)
 	now := time.Now()
-	old := now.Add(-ShortTermTTL - time.Minute).UnixMilli() // past short TTL, well within very-long TTL
+	old := now.Add(-ShortTermTTL - time.Minute).UnixMilli() // past short TTL, well within long TTL
 
 	if err := db.InsertFileVersion(FileVersion{FileId: "short", Path: "a.txt", Content: "c1", VersionId: "v1", Date: old, Term: 1}); err != nil {
 		t.Fatalf("insert term1: %v", err)
 	}
-	if err := db.InsertFileVersion(FileVersion{FileId: "long", Path: "b.txt", Content: "c2", VersionId: "v2", Date: old, Term: 4}); err != nil {
-		t.Fatalf("insert term4: %v", err)
+	if err := db.InsertFileVersion(FileVersion{FileId: "long", Path: "b.txt", Content: "c2", VersionId: "v2", Date: old, Term: 3}); err != nil {
+		t.Fatalf("insert term3: %v", err)
 	}
 
 	if err := db.DeleteExpiredFileVersions(now); err != nil {
@@ -35,8 +35,8 @@ func TestDeleteExpiredFileVersions_PerTermTTL(t *testing.T) {
 	if _, ok := dates["short"]; ok {
 		t.Fatalf("expected short-tier row to have expired and been deleted, got %+v", dates["short"])
 	}
-	if dates["long"][3] != old {
-		t.Fatalf("expected Term=4 row to survive, got %+v", dates["long"])
+	if dates["long"][2] != old {
+		t.Fatalf("expected Term=3 row to survive, got %+v", dates["long"])
 	}
 }
 
@@ -61,7 +61,7 @@ func TestGetLastVersionDates_CumulativeAcrossFiles(t *testing.T) {
 	}
 
 	f1 := dates["f1"]
-	if f1[0] != t1 || f1[1] != t1 || f1[2] != t1 || f1[3] != 0 {
+	if f1[0] != t1 || f1[1] != t1 || f1[2] != t1 {
 		t.Fatalf("f1 cumulative thresholds wrong: %+v", f1)
 	}
 	f2 := dates["f2"]
@@ -140,7 +140,7 @@ func TestBuildFileVersionResponses_MergesTagsAndSortsNewestFirst(t *testing.T) {
 // even when real past versions have far larger (newer) Date values.
 func TestCurrentSnapshotResponse_PinnedFirstRegardlessOfDate(t *testing.T) {
 	f := &DBFile{FileId: "f1", Path: "a.txt", Content: "now"}
-	persisted := []FileVersion{{FileId: "f1", VersionId: "v1", Date: 999999, Term: 4}}
+	persisted := []FileVersion{{FileId: "f1", VersionId: "v1", Date: 999999, Term: 3}}
 
 	out := append([]FileVersionResponse{currentSnapshotResponse(f)}, buildFileVersionResponses(persisted, nil)...)
 

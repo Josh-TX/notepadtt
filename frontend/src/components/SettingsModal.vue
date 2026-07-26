@@ -95,14 +95,6 @@
               <label>Long Term Min Delay</label>
               <input type="text" class="duration-input" v-model="form.longTermMinDelay" />
             </div>
-            <div class="field-row">
-              <label>Very Long Term TTL</label>
-              <input type="text" class="duration-input" v-model="form.veryLongTermTTL" />
-            </div>
-            <div class="field-row">
-              <label>Very Long Term Min Delay</label>
-              <input type="text" class="duration-input" v-model="form.veryLongTermMinDelay" />
-            </div>
           </section>
         </div>
         <div class="settings-footer">

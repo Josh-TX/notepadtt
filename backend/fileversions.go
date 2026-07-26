@@ -16,7 +16,7 @@ type FileVersion struct {
 	Content   string
 	VersionId string
 	Date      int64 // unix millis; the moment this version became non-current
-	Term      int   // retention tier, 1-4, cumulative (1=short, 2=+med, 3=+long, 4=+verylong)
+	Term      int   // retention tier, 1-3, cumulative (1=short, 2=+med, 3=+long)
 }
 
 func createFileVersionsSchema(sqldb *sql.DB) error {
@@ -152,24 +152,22 @@ func (d *DB) DeleteExpiredFileVersions(now time.Time) error {
 	_, err := d.sql.Exec(`DELETE FROM FileVersions WHERE
 		(Term=1 AND Date < ?) OR
 		(Term=2 AND Date < ?) OR
-		(Term=3 AND Date < ?) OR
-		(Term=4 AND Date < ?)`,
+		(Term=3 AND Date < ?)`,
 		nowMillis-ShortTermTTL.Milliseconds(),
 		nowMillis-MedTermTTL.Milliseconds(),
 		nowMillis-LongTermTTL.Milliseconds(),
-		nowMillis-VeryLongTermTTL.Milliseconds(),
 	)
 	return err
 }
 
-// lastVersionDates holds, per cumulative term threshold N (index N-1, N in 1..4), the
+// lastVersionDates holds, per cumulative term threshold N (index N-1, N in 1..3), the
 // most recent Date among existing FileVersions rows satisfying Term>=N for one FileId.
 // A zero value means no qualifying row exists yet for that threshold.
-type lastVersionDates [4]int64
+type lastVersionDates [3]int64
 
 // GetLastVersionDates runs one grouped query across fileIds, returning for each the
 // most recent Date at every cumulative term threshold (MAX(Date) WHERE Term>=N, for N
-// in 1..4), since Term values are cumulative (a Term=3 row counts toward >=1, >=2, >=3).
+// in 1..3), since Term values are cumulative (a Term=3 row counts toward >=1, >=2, >=3).
 func (d *DB) GetLastVersionDates(fileIds []string) (map[string]lastVersionDates, error) {
 	result := map[string]lastVersionDates{}
 	if len(fileIds) == 0 {
@@ -184,8 +182,7 @@ func (d *DB) GetLastVersionDates(fileIds []string) (map[string]lastVersionDates,
 	query := `SELECT FileId,
 		MAX(CASE WHEN Term>=1 THEN Date END),
 		MAX(CASE WHEN Term>=2 THEN Date END),
-		MAX(CASE WHEN Term>=3 THEN Date END),
-		MAX(CASE WHEN Term>=4 THEN Date END)
+		MAX(CASE WHEN Term>=3 THEN Date END)
 		FROM FileVersions WHERE FileId IN (` + strings.Join(placeholders, ",") + `) GROUP BY FileId`
 	rows, err := d.sql.Query(query, args...)
 	if err != nil {
@@ -194,11 +191,11 @@ func (d *DB) GetLastVersionDates(fileIds []string) (map[string]lastVersionDates,
 	defer rows.Close()
 	for rows.Next() {
 		var fileId string
-		var t1, t2, t3, t4 sql.NullInt64
-		if err := rows.Scan(&fileId, &t1, &t2, &t3, &t4); err != nil {
+		var t1, t2, t3 sql.NullInt64
+		if err := rows.Scan(&fileId, &t1, &t2, &t3); err != nil {
 			continue
 		}
-		result[fileId] = lastVersionDates{t1.Int64, t2.Int64, t3.Int64, t4.Int64}
+		result[fileId] = lastVersionDates{t1.Int64, t2.Int64, t3.Int64}
 	}
 	return result, nil
 }

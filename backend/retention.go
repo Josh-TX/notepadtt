@@ -15,23 +15,21 @@ import (
 // applyRetentionSettings) at startup and on every settings save — these vars are no
 // longer hardcoded.
 var (
-	ShortTermTTL         time.Duration
-	ShortTermMinDelay    time.Duration
-	MedTermTTL           time.Duration
-	MedTermMinDelay      time.Duration
-	LongTermTTL          time.Duration
-	LongTermMinDelay     time.Duration
-	VeryLongTermTTL      time.Duration
-	VeryLongTermMinDelay time.Duration
+	ShortTermTTL      time.Duration
+	ShortTermMinDelay time.Duration
+	MedTermTTL        time.Duration
+	MedTermMinDelay   time.Duration
+	LongTermTTL       time.Duration
+	LongTermMinDelay  time.Duration
 
 	TrashTTL time.Duration
 )
 
-// minDelayByTerm[N] is the MinDelay for cumulative term N (1..4); index 0 is unused.
+// minDelayByTerm[N] is the MinDelay for cumulative term N (1..3); index 0 is unused.
 // Re-derived by applyRetentionSettings whenever the MinDelay vars above change.
-var minDelayByTerm [5]time.Duration
+var minDelayByTerm [4]time.Duration
 
-// applyRetentionSettings parses TrashTTL and the 8 File History TTL/MinDelay strings
+// applyRetentionSettings parses TrashTTL and the 6 File History TTL/MinDelay strings
 // from Settings into the package vars above. Called from setSettingsCache, which holds
 // settingsMu for the duration — that's the only synchronization here: read access from
 // the once-a-minute FileVersioning tick is intentionally left unguarded, since the only
@@ -57,16 +55,10 @@ func applyRetentionSettings(s Settings) error {
 	if LongTermMinDelay, err = parseDuration(s.LongTermMinDelay); err != nil {
 		return err
 	}
-	if VeryLongTermTTL, err = parseDuration(s.VeryLongTermTTL); err != nil {
-		return err
-	}
-	if VeryLongTermMinDelay, err = parseDuration(s.VeryLongTermMinDelay); err != nil {
-		return err
-	}
 	if TrashTTL, err = parseDuration(s.TrashTTL); err != nil {
 		return err
 	}
-	minDelayByTerm = [5]time.Duration{0, ShortTermMinDelay, MedTermMinDelay, LongTermMinDelay, VeryLongTermMinDelay}
+	minDelayByTerm = [4]time.Duration{0, ShortTermMinDelay, MedTermMinDelay, LongTermMinDelay}
 	return nil
 }
 
@@ -168,7 +160,7 @@ func assignTermsForFile(entries []recentVersion, last *lastVersionDates) []FileV
 		}
 
 		term := 1
-		for n := 2; n <= 4; n++ {
+		for n := 2; n <= 3; n++ {
 			if last[n-1] != 0 && gap(addedAtMillis, last[n-1]) < minDelayByTerm[n] {
 				break
 			}
