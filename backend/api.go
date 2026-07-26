@@ -2,6 +2,7 @@ package backend
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -628,23 +629,30 @@ func (s *Server) handleEmptyTrash(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleSearch reads the per-search source toggles (History/Trash, set by SearchModal's
-// live checkboxes) from query params, and the result-shaping knobs (LinesPerResult,
-// MaxResultsPerFile, MaxFiles) from the Settings cache — those three aren't exposed as
-// SearchModal controls, only configurable via the Settings modal.
+// handleSearch reads the per-search source/mode toggles (History/Trash/Regex, set by
+// SearchModal's live checkboxes) from query params, and the result-shaping knobs
+// (LinesPerResult, MaxResultsPerFile, MaxFiles) from the Settings cache — those three
+// aren't exposed as SearchModal controls, only configurable via the Settings modal. A
+// regex compile failure on a user-supplied pattern is reported as 400 rather than 500.
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
-	terms := strings.Fields(r.URL.Query().Get("q"))
+	q := r.URL.Query().Get("q")
 	settings := GetSettingsCache()
 	opts := SearchOptions{
 		IncludeHistory:    r.URL.Query().Get("history") == "true",
 		IncludeTrash:      r.URL.Query().Get("trash") == "true",
+		Regex:             r.URL.Query().Get("regex") == "true",
 		LinesPerResult:    settings.LinesPerResult,
 		MaxResultsPerFile: settings.MaxResultsPerFile,
 		MaxFiles:          settings.MaxFiles,
 	}
-	results, err := s.db.SearchFiles(terms, opts)
+	results, err := s.db.SearchFiles(q, opts)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		var regexErr *RegexCompileError
+		if errors.As(err, &regexErr) {
+			http.Error(w, regexErr.Error(), http.StatusBadRequest)
+		} else {
+			http.Error(w, err.Error(), 500)
+		}
 		return
 	}
 	if results == nil {

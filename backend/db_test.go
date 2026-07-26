@@ -6,6 +6,16 @@ import (
 	"testing"
 )
 
+func newTestDB(t *testing.T) *DB {
+	t.Helper()
+	dir := t.TempDir()
+	db, err := NewDB(dir)
+	if err != nil {
+		t.Fatalf("NewDB: %v", err)
+	}
+	return db
+}
+
 // A pre-existing file reached only through a folder symlink (i.e. present on
 // disk before the app ever started, so no fsnotify Create event will fire for
 // it) should still be discovered and tracked by the startup scan.

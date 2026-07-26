@@ -3,14 +3,23 @@
     <div v-if="store.searchModalOpen" class="search-overlay" @mousedown="onOverlayMouseDown" @click="onOverlayClick">
       <div class="search-modal">
         <div class="search-header">
-          <input
-            ref="inputRef"
-            v-model="query"
-            class="search-input"
-            placeholder="Search files..."
-            @input="onInput"
-            @keydown.escape="close"
-          />
+          <div class="search-input-wrap">
+            <input
+              ref="inputRef"
+              v-model="query"
+              class="search-input"
+              placeholder="Search files..."
+              @input="onInput"
+              @keydown.escape="close"
+            />
+            <button
+              type="button"
+              class="regex-toggle"
+              :class="{ active: store.searchIncludeRegex }"
+              title="Regex search"
+              @click="store.searchIncludeRegex = !store.searchIncludeRegex; onFilterChange()"
+            >.*</button>
+          </div>
           <button class="close-btn" @click="close">✕</button>
         </div>
         <div class="search-filters">
@@ -21,10 +30,11 @@
             <input type="checkbox" v-model="store.searchIncludeTrash" @change="onFilterChange" /> Trash
           </label>
         </div>
+        <div v-if="regexError" class="search-error">{{ regexError }}</div>
         <div class="search-body">
           <div v-if="!query" class="search-placeholder">Type to search…</div>
           <div v-else-if="loading" class="search-loading">
-            <div class="loading-bar"></div>
+            <div class="loading-bar" :class="{ searching }"></div>
           </div>
           <div v-else-if="results.length === 0" class="search-placeholder">No results</div>
           <div v-else class="search-results">
@@ -69,13 +79,15 @@ import { ref, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { store, closeSearchModal, setSearchState, setActiveFile, setFileVersion, editorActions, openHistoryModal, openTrashModal } from '../store.js'
 import { searchFiles, getFile } from '../api.js'
-import { findMatchRanges } from '../textMatch.js'
+import { findMatchRanges, findRegexMatchRanges } from '../textMatch.js'
 
 const router = useRouter()
 const inputRef = ref(null)
 const query = ref('')
 const results = ref([])
 const loading = ref(false)
+const searching = ref(false)
+const regexError = ref('')
 let debounceTimer = null
 
 // Restore last query/results when modal opens; autofocus input
@@ -103,6 +115,7 @@ function onOverlayClick(e) {
 function onInput() {
   results.value = []
   loading.value = false
+  regexError.value = ''
   clearTimeout(debounceTimer)
   setSearchState(query.value, [])
   if (!query.value.trim()) return
@@ -110,8 +123,8 @@ function onInput() {
   debounceTimer = setTimeout(runSearch, 400)
 }
 
-// Toggling History/Trash re-runs the current query immediately rather than waiting
-// for the input debounce — there's no text being typed to debounce against.
+// Toggling History/Trash/Regex re-runs the current query immediately rather than
+// waiting for the input debounce — there's no text being typed to debounce against.
 function onFilterChange() {
   clearTimeout(debounceTimer)
   if (!query.value.trim()) return
@@ -121,15 +134,21 @@ function onFilterChange() {
 
 async function runSearch() {
   const q = query.value
-  if (!q.trim()) { loading.value = false; return }
+  if (!q.trim()) { loading.value = false; searching.value = false; return }
+  searching.value = true
   try {
-    const data = await searchFiles(q, { history: store.searchIncludeHistory, trash: store.searchIncludeTrash })
+    const data = await searchFiles(q, { history: store.searchIncludeHistory, trash: store.searchIncludeTrash, regex: store.searchIncludeRegex })
     results.value = data
+    regexError.value = ''
     setSearchState(q, data)
   } catch (e) {
     results.value = []
+    // The only validation error the search endpoint can return is a bad regex
+    // pattern (400), so in regex mode surface it inline instead of just going blank.
+    regexError.value = store.searchIncludeRegex ? e.message : ''
   } finally {
     loading.value = false
+    searching.value = false
   }
 }
 
@@ -137,12 +156,25 @@ function snippetLines(snippet) {
   return snippet.split('\n')
 }
 
-// Returns escaped HTML with matching terms wrapped in <mark>
-function highlightLine(line) {
-  const terms = query.value.trim().split(/\s+/).filter(Boolean)
-  if (!terms.length) return escapeHtml(line)
+// terms/pattern used for both SearchModal's own <mark> highlighting and the
+// highlightTerms deep-link passed to the Editor/HistoryModal/TrashModal once a result
+// is opened. In regex mode the raw pattern is kept whole rather than whitespace-split,
+// since splitting would break multi-word patterns.
+function searchTerms() {
+  return store.searchIncludeRegex ? [query.value.trim()] : query.value.trim().split(/\s+/).filter(Boolean)
+}
 
-  const merged = findMatchRanges(line, terms)
+// Returns escaped HTML with matching terms (or regex matches, in regex mode) wrapped
+// in <mark>
+function highlightLine(line) {
+  let merged
+  if (store.searchIncludeRegex) {
+    merged = findRegexMatchRanges(line, query.value.trim())
+  } else {
+    const terms = query.value.trim().split(/\s+/).filter(Boolean)
+    if (!terms.length) return escapeHtml(line)
+    merged = findMatchRanges(line, terms)
+  }
 
   let html = ''
   let pos = 0
@@ -181,7 +213,7 @@ async function navigateToFileLocation(fileId, path) {
 
 async function openResult(result, section) {
   close()
-  const terms = query.value.trim().split(/\s+/).filter(Boolean)
+  const terms = searchTerms()
 
   if (result.source === 'trash') {
     openTrashModal({ fileId: result.fileId, scrollLine: section.startLineNumber, highlightTerms: terms })
@@ -238,17 +270,41 @@ async function openResult(result, section) {
   gap: 8px;
   flex-shrink: 0;
 }
-.search-input {
+.search-input-wrap {
+  position: relative;
   flex: 1;
+}
+.search-input {
+  width: 100%;
+  box-sizing: border-box;
   background: #2d2d2d;
   border: 1px solid #444;
   border-radius: 4px;
   color: #d4d4d4;
   font-size: 14px;
-  padding: 6px 10px;
+  padding: 6px 34px 6px 10px;
   outline: none;
 }
 .search-input:focus { border-color: #0078d4; }
+.regex-toggle {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: #888;
+  font-size: 12px;
+  font-family: monospace;
+  font-weight: bold;
+  width: 24px;
+  height: 22px;
+  cursor: pointer;
+  line-height: 1;
+}
+.regex-toggle:hover { color: #ccc; background: #3a3a3a; }
+.regex-toggle.active { color: #fff; background: #0078d4; border-color: #0078d4; }
 .close-btn {
   background: transparent;
   border: none;
@@ -265,6 +321,13 @@ async function openResult(result, section) {
   gap: 16px;
   padding: 6px 12px;
   border-bottom: 1px solid #2d2d2d;
+  flex-shrink: 0;
+}
+.search-error {
+  padding: 6px 12px;
+  border-bottom: 1px solid #2d2d2d;
+  color: #f48771;
+  font-size: 12px;
   flex-shrink: 0;
 }
 .filter-checkbox {
@@ -294,10 +357,15 @@ async function openResult(result, section) {
 }
 .loading-bar {
   height: 2px;
+  background: #0078d4;
+  opacity: 0.35;
+  border-radius: 2px;
+}
+.loading-bar.searching {
   background: linear-gradient(90deg, transparent, #0078d4, transparent);
   background-size: 200% 100%;
   animation: loading 1.2s linear infinite;
-  border-radius: 2px;
+  opacity: 1;
 }
 @keyframes loading {
   0% { background-position: 200% 0; }

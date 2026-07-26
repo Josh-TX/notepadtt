@@ -43,7 +43,6 @@ type DBFile struct {
 type DB struct {
 	sql  *sql.DB
 	root string
-	fts  ftsSyncState
 }
 
 func NewDB(root string) (*DB, error) {
@@ -68,17 +67,6 @@ func NewDB(root string) (*DB, error) {
 		return nil, err
 	}
 
-	_, err = sqldb.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
-		Path,
-		Content,
-		content='files',
-		content_rowid='Id',
-		tokenize='trigram'
-	)`)
-	if err != nil {
-		return nil, err
-	}
-
 	if err := createFileVersionsSchema(sqldb); err != nil {
 		return nil, err
 	}
@@ -91,11 +79,8 @@ func NewDB(root string) (*DB, error) {
 		return nil, err
 	}
 
-	db := &DB{sql: sqldb, root: root, fts: ftsSyncState{cache: map[string]ftsCacheEntry{}}}
+	db := &DB{sql: sqldb, root: root}
 	if err := db.startupScan(); err != nil {
-		return nil, err
-	}
-	if err := db.seedFtsCache(); err != nil {
 		return nil, err
 	}
 	settings, err := db.GetSettings()
@@ -216,32 +201,6 @@ func (d *DB) startupScan() error {
 	return nil
 }
 
-// seedFtsCache populates the files_fts "last-synced" cache from files as it stands
-// right after startupScan. files_fts itself persists across restarts and should
-// already be in sync as of the last clean shutdown, but the in-memory cache starts
-// empty every restart — this seeds it back to a consistent baseline rather than
-// flushing immediately.
-func (d *DB) seedFtsCache() error {
-	rows, err := d.sql.Query(`SELECT FileId, Id, Path, Content FROM files`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	cache := map[string]ftsCacheEntry{}
-	for rows.Next() {
-		var fileId, path, content string
-		var rowid int64
-		if err := rows.Scan(&fileId, &rowid, &path, &content); err != nil {
-			continue
-		}
-		cache[fileId] = ftsCacheEntry{rowid: rowid, path: path, content: content}
-	}
-	d.fts.mu.Lock()
-	d.fts.cache = cache
-	d.fts.mu.Unlock()
-	return nil
-}
-
 func (d *DB) insertFileRecord(relPath, content string, orderNum int) (string, error) {
 	id := uniqueId(12)
 	versionId := uniqueId(5)
@@ -251,7 +210,6 @@ func (d *DB) insertFileRecord(relPath, content string, orderNum int) (string, er
 	if err != nil {
 		return "", err
 	}
-	d.MarkDirty(id)
 	return id, nil
 }
 
@@ -272,7 +230,6 @@ func (d *DB) InsertFileWithId(fileId, relPath, content string, orderNum int) (st
 	if err != nil {
 		return "", err
 	}
-	d.MarkDirty(fileId)
 	return versionId, nil
 }
 
@@ -334,7 +291,6 @@ func (d *DB) UpdateLastOpened(fileId string) error {
 func (d *DB) UpdateContent(fileId, content string) error {
 	now := time.Now().UnixMilli()
 	_, err := d.sql.Exec(`UPDATE files SET Content=?, ContentUpdated=? WHERE FileId=?`, content, now, fileId)
-	d.MarkDirty(fileId)
 	return err
 }
 
@@ -342,7 +298,6 @@ func (d *DB) UpdateContentAndVersion(fileId, content, versionId string) error {
 	now := time.Now().UnixMilli()
 	_, err := d.sql.Exec(`UPDATE files SET Content=?, ContentUpdated=?, VersionId=? WHERE FileId=?`,
 		content, now, versionId, fileId)
-	d.MarkDirty(fileId)
 	return err
 }
 
@@ -357,25 +312,16 @@ func (d *DB) UpdateContentAndVersionIf(fileId, content, versionId, expectedVersi
 		return false, err
 	}
 	n, err := res.RowsAffected()
-	if n == 1 {
-		d.MarkDirty(fileId)
-	}
 	return n == 1, err
 }
 
 func (d *DB) UpdatePathById(fileId, newPath string) error {
 	_, err := d.sql.Exec(`UPDATE files SET Path=? WHERE FileId=?`, newPath, fileId)
-	d.MarkDirty(fileId)
 	return err
 }
 
 func (d *DB) UpdatePath(oldPath, newPath string) error {
-	var fileId string
-	d.sql.QueryRow(`SELECT FileId FROM files WHERE Path=?`, oldPath).Scan(&fileId)
 	_, err := d.sql.Exec(`UPDATE files SET Path=? WHERE Path=?`, newPath, oldPath)
-	if fileId != "" {
-		d.MarkDirty(fileId)
-	}
 	return err
 }
 
@@ -396,14 +342,12 @@ func (d *DB) UpdateFolderPath(oldPrefix, newPrefix string) error {
 	for _, r := range recs {
 		newPath := newPrefix + strings.TrimPrefix(r.path, oldPrefix)
 		d.sql.Exec(`UPDATE files SET Path=? WHERE FileId=?`, newPath, r.id)
-		d.MarkDirty(r.id)
 	}
 	return nil
 }
 
 func (d *DB) DeleteFile(fileId string) error {
 	_, err := d.sql.Exec(`DELETE FROM files WHERE FileId=?`, fileId)
-	d.MarkDirty(fileId)
 	return err
 }
 

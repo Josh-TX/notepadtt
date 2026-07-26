@@ -72,6 +72,7 @@ export function searchFiles(query, opts = {}) {
   const params = new URLSearchParams({ q: query })
   if (opts.history) params.set('history', 'true')
   if (opts.trash) params.set('trash', 'true')
+  if (opts.regex) params.set('regex', 'true')
   return req('GET', `/api/search?${params.toString()}`)
 }
 

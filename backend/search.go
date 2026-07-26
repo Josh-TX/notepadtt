@@ -1,18 +1,41 @@
 package backend
 
 import (
-	"database/sql"
-	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 )
 
-// SearchOptions bundles the per-request source toggles (IncludeHistory/IncludeTrash,
-// controlled by SearchModal's live checkboxes) with the result-shaping knobs that come
-// from Settings (LinesPerResult/MaxResultsPerFile/MaxFiles).
+// Scoring weights for SearchFiles. Path matches count PathWeight times as much as
+// Content matches (mirrors the old bm25 3:1 path weighting). Non-regex mode further
+// multiplies both by 1 + TermMultiplierPerTerm*distinctTermCount, rewarding rows that
+// match more of the distinct query terms. Source weights are applied last, on top of
+// the path/content score, so a strong match in a lower-priority source can still
+// outscore a weak match in a higher-priority one.
+const (
+	pathWeight = 3.0
+
+	termMultiplierBase    = 1.0
+	termMultiplierPerTerm = 0.5
+
+	filesSourceWeight   = 5.0
+	trashSourceWeight   = 2.0
+	historySourceWeight = 1.0
+
+	// minTermLength discards non-regex query terms shorter than this, mirroring the
+	// effective floor the old FTS5 trigram index imposed on short queries. Regex mode
+	// has no minimum.
+	minTermLength = 2
+)
+
+// SearchOptions bundles the per-request source/mode toggles (IncludeHistory/
+// IncludeTrash/Regex, controlled by SearchModal's live checkboxes) with the
+// result-shaping knobs that come from Settings (LinesPerResult/MaxResultsPerFile/
+// MaxFiles).
 type SearchOptions struct {
 	IncludeHistory    bool
 	IncludeTrash      bool
+	Regex             bool
 	LinesPerResult    int
 	MaxResultsPerFile int
 	MaxFiles          int
@@ -39,11 +62,18 @@ type SearchResult struct {
 	Sections  []SearchSection `json:"sections"`
 }
 
-// searchCandidate is one not-yet-sectioned match from a single source table, carrying
-// just enough to build a SearchResult once the (more expensive) section extraction runs
-// on the final, already-capped result set. Deliberately has no score field: bm25() is
-// reliable when used in a query's own ORDER BY, but reading it out via SELECT into Go
-// and then comparing/combining those values turned out not to be — see SearchFiles.
+// RegexCompileError wraps a regexp.Compile failure on a user-supplied pattern, letting
+// callers (handleSearch) distinguish a bad pattern (400) from an internal DB error (500).
+type RegexCompileError struct {
+	err error
+}
+
+func (e *RegexCompileError) Error() string { return e.err.Error() }
+func (e *RegexCompileError) Unwrap() error { return e.err }
+
+// searchCandidate is one not-yet-scored, not-yet-sectioned match from a single source
+// table, carrying just enough to compute a score and then build a SearchResult once
+// the (more expensive) section extraction runs on the final, already-capped result set.
 type searchCandidate struct {
 	FileId    string
 	Path      string
@@ -52,71 +82,336 @@ type searchCandidate struct {
 	Source    string
 }
 
-// SearchFiles fills up to MaxFiles results by querying sources in strict priority
-// order — Files, then Trash, then History — each one only queried while slots remain.
-// There's no cross-source ranking: bm25() is reliable for ORDER BY but not as a value
-// read out via SELECT, so results from different FTS5 tables are never compared against
-// each other numerically. Instead each source is fully exhausted (up to its share of
-// MaxFiles) before the next is even queried, and the final list is simply Files results
-// followed by Trash results followed by History results.
-func (d *DB) SearchFiles(terms []string, opts SearchOptions) ([]SearchResult, error) {
+// SearchFiles searches files/FileTrash/FileVersions for query, in either whitespace-
+// split-terms LIKE mode (default) or single-pattern regex mode (opts.Regex). All
+// matches across all three enabled sources are scored (see the weight constants above)
+// and merged into one list sorted purely by score, capped to opts.MaxFiles. Returns
+// (nil, nil) for an empty (or, in non-regex mode, all-too-short) query, and a
+// *RegexCompileError if opts.Regex is set and query fails to compile.
+func (d *DB) SearchFiles(query string, opts SearchOptions) ([]SearchResult, error) {
+	if strings.TrimSpace(query) == "" {
+		return nil, nil
+	}
+	if opts.Regex {
+		return d.searchFilesRegex(query, opts)
+	}
+	return d.searchFilesLike(query, opts)
+}
+
+// searchFilesLike implements non-regex mode: terms are OR'd across Path/Content via
+// SQL LIKE narrowing (rather than pulling every row into Go and filtering with
+// strings.Contains), then scored in Go once only the matching rows come back.
+func (d *DB) searchFilesLike(query string, opts SearchOptions) ([]SearchResult, error) {
+	terms := significantTerms(strings.Fields(query))
 	if len(terms) == 0 {
 		return nil, nil
 	}
+	where, args := buildLikeWhere(terms)
+	scoreFn := func(c searchCandidate) float64 { return scoreLike(c.Path, c.Content, terms) }
+	sectionsFn := func(content string) []SearchSection {
+		return extractSections(content, terms, opts.LinesPerResult, opts.MaxResultsPerFile)
+	}
 
-	matchExpr := buildMatchExpr(terms)
-
-	fileCandidates, err := d.searchLiveFiles(matchExpr, opts.MaxFiles)
+	fileCandidates, err := d.fetchFileCandidates(where, args)
 	if err != nil {
 		return nil, err
 	}
-	remaining := opts.MaxFiles - len(fileCandidates)
-
-	claimed := make(map[string]bool, len(fileCandidates))
-	for _, c := range fileCandidates {
-		claimed[c.FileId] = true
-	}
+	claimed := claimedFileIds(fileCandidates)
 
 	var trashCandidates []searchCandidate
-	if opts.IncludeTrash && remaining > 0 {
-		trashCandidates, err = d.searchTrash(matchExpr, remaining)
+	if opts.IncludeTrash {
+		if trashCandidates, err = d.fetchTrashCandidates(where, args); err != nil {
+			return nil, err
+		}
+		addClaimedFileIds(claimed, trashCandidates)
+	}
+
+	var historyCandidates []searchCandidate
+	if opts.IncludeHistory {
+		raw, err := d.fetchHistoryCandidates(where, args)
 		if err != nil {
 			return nil, err
 		}
-		for _, c := range trashCandidates {
-			claimed[c.FileId] = true
-		}
-		remaining -= len(trashCandidates)
+		historyCandidates = bestHistoryPerFileId(raw, claimed, scoreFn)
 	}
 
-	// History is the only source that can return many rows for the same FileId (a
-	// file's past versions), so it can't just take a flat LIMIT like Files/Trash —
-	// claimed gets one FileId added per loop iteration, and each iteration's query
-	// excludes everything claimed so far, guaranteeing every row returned here is a
-	// genuinely new FileId. See searchNextHistoryMatch.
+	all := mergeCandidates(fileCandidates, trashCandidates, historyCandidates)
+	return d.buildResults(all, opts, scoreFn, sectionsFn)
+}
+
+// searchFilesRegex implements regex mode: query is compiled once as a Go RE2 pattern
+// and matched line-by-line against every candidate row pulled from the enabled source
+// tables — there's no SQL-level narrowing (rejected; see spec), so every row from each
+// enabled source is fetched and then filtered by pattern match in Go.
+func (d *DB) searchFilesRegex(query string, opts SearchOptions) ([]SearchResult, error) {
+	pattern, err := regexp.Compile(query)
+	if err != nil {
+		return nil, &RegexCompileError{err}
+	}
+	scoreFn := func(c searchCandidate) float64 { return scoreRegex(c.Path, c.Content, pattern) }
+	sectionsFn := func(content string) []SearchSection {
+		return extractSectionsRegex(content, pattern, opts.LinesPerResult, opts.MaxResultsPerFile)
+	}
+
+	fileCandidates, err := d.fetchFileCandidates("", nil)
+	if err != nil {
+		return nil, err
+	}
+	fileCandidates = filterRegexMatches(fileCandidates, pattern)
+	claimed := claimedFileIds(fileCandidates)
+
+	var trashCandidates []searchCandidate
+	if opts.IncludeTrash {
+		if trashCandidates, err = d.fetchTrashCandidates("", nil); err != nil {
+			return nil, err
+		}
+		trashCandidates = filterRegexMatches(trashCandidates, pattern)
+		addClaimedFileIds(claimed, trashCandidates)
+	}
+
 	var historyCandidates []searchCandidate
 	if opts.IncludeHistory {
-		for remaining > 0 {
-			c, found, err := d.searchNextHistoryMatch(matchExpr, claimed)
-			if err != nil {
-				return nil, err
-			}
-			if !found {
-				break
-			}
-			claimed[c.FileId] = true
-			historyCandidates = append(historyCandidates, c)
-			remaining--
+		raw, err := d.fetchHistoryCandidates("", nil)
+		if err != nil {
+			return nil, err
 		}
+		raw = filterRegexMatches(raw, pattern)
+		historyCandidates = bestHistoryPerFileId(raw, claimed, scoreFn)
 	}
 
-	all := make([]searchCandidate, 0, len(fileCandidates)+len(trashCandidates)+len(historyCandidates))
-	all = append(all, fileCandidates...)
-	all = append(all, trashCandidates...)
-	all = append(all, historyCandidates...)
+	all := mergeCandidates(fileCandidates, trashCandidates, historyCandidates)
+	return d.buildResults(all, opts, scoreFn, sectionsFn)
+}
 
-	results := make([]SearchResult, 0, len(all))
+// significantTerms drops query terms shorter than minTermLength.
+func significantTerms(terms []string) []string {
+	out := make([]string, 0, len(terms))
+	for _, t := range terms {
+		if len(t) >= minTermLength {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// buildLikeWhere builds a SQL WHERE fragment OR-ing every term across Path/Content,
+// with placeholders for each term's escaped, wildcard-wrapped LIKE pattern.
+func buildLikeWhere(terms []string) (string, []any) {
+	parts := make([]string, len(terms))
+	args := make([]any, 0, len(terms)*2)
+	for i, term := range terms {
+		pattern := "%" + escapeLikeTerm(term) + "%"
+		parts[i] = `(Content LIKE ? ESCAPE '\' OR Path LIKE ? ESCAPE '\')`
+		args = append(args, pattern, pattern)
+	}
+	return strings.Join(parts, " OR "), args
+}
+
+// escapeLikeTerm escapes LIKE wildcard characters (% and _), plus the escape
+// character itself, so a literal % or _ in a user-supplied term matches literally
+// rather than acting as a wildcard.
+func escapeLikeTerm(term string) string {
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return r.Replace(term)
+}
+
+// fetchFileCandidates queries the live files table, optionally narrowed by a LIKE
+// where+args pair (empty where fetches every row, used by regex mode).
+func (d *DB) fetchFileCandidates(where string, args []any) ([]searchCandidate, error) {
+	return d.fetchCandidates(`SELECT FileId, Path, Content FROM files`, where, args, "file")
+}
+
+// fetchTrashCandidates queries FileTrash the same way fetchFileCandidates queries files.
+func (d *DB) fetchTrashCandidates(where string, args []any) ([]searchCandidate, error) {
+	return d.fetchCandidates(`SELECT FileId, Path, Content FROM FileTrash`, where, args, "trash")
+}
+
+func (d *DB) fetchCandidates(baseQuery, where string, args []any, source string) ([]searchCandidate, error) {
+	query := baseQuery
+	if where != "" {
+		query += ` WHERE ` + where
+	}
+	rows, err := d.sql.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []searchCandidate
+	for rows.Next() {
+		var c searchCandidate
+		if err := rows.Scan(&c.FileId, &c.Path, &c.Content); err != nil {
+			continue
+		}
+		c.Source = source
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// fetchHistoryCandidates queries FileVersions, the one source with an extra VersionId
+// column and (potentially) many rows per FileId — dedup to one-per-FileId happens
+// afterward in bestHistoryPerFileId, not here.
+func (d *DB) fetchHistoryCandidates(where string, args []any) ([]searchCandidate, error) {
+	query := `SELECT FileId, Path, Content, VersionId FROM FileVersions`
+	if where != "" {
+		query += ` WHERE ` + where
+	}
+	rows, err := d.sql.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []searchCandidate
+	for rows.Next() {
+		var c searchCandidate
+		if err := rows.Scan(&c.FileId, &c.Path, &c.Content, &c.VersionId); err != nil {
+			continue
+		}
+		c.Source = "history"
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// filterRegexMatches keeps only candidates where pattern matches Path or at least one
+// line of Content — needed in regex mode since there's no SQL-level narrowing, so every
+// fetched row must be checked before it's treated as a match.
+func filterRegexMatches(candidates []searchCandidate, pattern *regexp.Regexp) []searchCandidate {
+	var out []searchCandidate
+	for _, c := range candidates {
+		if pattern.MatchString(c.Path) || matchesAnyLine(c.Content, pattern) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func matchesAnyLine(content string, pattern *regexp.Regexp) bool {
+	for _, line := range strings.Split(content, "\n") {
+		if pattern.MatchString(line) {
+			return true
+		}
+	}
+	return false
+}
+
+// claimedFileIds/addClaimedFileIds track which FileIds already have a result from a
+// higher-priority source (Files, then Trash), so History never produces a second
+// result for a FileId that's already represented.
+func claimedFileIds(candidates []searchCandidate) map[string]bool {
+	m := make(map[string]bool, len(candidates))
+	addClaimedFileIds(m, candidates)
+	return m
+}
+
+func addClaimedFileIds(m map[string]bool, candidates []searchCandidate) {
+	for _, c := range candidates {
+		m[c.FileId] = true
+	}
+}
+
+// bestHistoryPerFileId collapses possibly-many matching FileVersions rows per FileId
+// down to the single best-scoring one (a file can have many historical snapshots, but
+// only its best match should ever surface), excluding any FileId already claimed by a
+// higher-priority source.
+func bestHistoryPerFileId(raw []searchCandidate, claimed map[string]bool, scoreFn func(searchCandidate) float64) []searchCandidate {
+	bestScore := map[string]float64{}
+	best := map[string]searchCandidate{}
+	for _, c := range raw {
+		if claimed[c.FileId] {
+			continue
+		}
+		s := scoreFn(c)
+		if prev, ok := bestScore[c.FileId]; !ok || s > prev {
+			bestScore[c.FileId] = s
+			best[c.FileId] = c
+		}
+	}
+	out := make([]searchCandidate, 0, len(best))
+	for _, c := range best {
+		out = append(out, c)
+	}
+	return out
+}
+
+func mergeCandidates(groups ...[]searchCandidate) []searchCandidate {
+	var all []searchCandidate
+	for _, g := range groups {
+		all = append(all, g...)
+	}
+	return all
+}
+
+// scoreLike computes a non-regex candidate's score: occurrence counts (not just
+// presence) of every term across Path and Content, multiplied by 1 +
+// termMultiplierPerTerm*distinctTermCount (distinctTermCount computed once across
+// path+content combined), then path occurrences weighted pathWeight over content.
+func scoreLike(path, content string, terms []string) float64 {
+	lowerPath := strings.ToLower(path)
+	lowerContent := strings.ToLower(content)
+	var pathOcc, contentOcc, distinctTermCount int
+	for _, term := range terms {
+		lt := strings.ToLower(term)
+		p := strings.Count(lowerPath, lt)
+		c := strings.Count(lowerContent, lt)
+		pathOcc += p
+		contentOcc += c
+		if p+c > 0 {
+			distinctTermCount++
+		}
+	}
+	multiplier := termMultiplierBase + termMultiplierPerTerm*float64(distinctTermCount)
+	pathScore := float64(pathOcc) * multiplier * pathWeight
+	contentScore := float64(contentOcc) * multiplier
+	return pathScore + contentScore
+}
+
+// scoreRegex computes a regex candidate's score: raw weighted occurrence counts with
+// no multiplier concept (only ever one pattern). Content is matched strictly per-line
+// (no cross-line matching), so a line with N matches contributes N to the count.
+func scoreRegex(path, content string, pattern *regexp.Regexp) float64 {
+	pathOcc := len(pattern.FindAllStringIndex(path, -1))
+	var contentOcc int
+	for _, line := range strings.Split(content, "\n") {
+		contentOcc += len(pattern.FindAllStringIndex(line, -1))
+	}
+	pathScore := float64(pathOcc) * pathWeight
+	contentScore := float64(contentOcc)
+	return pathScore + contentScore
+}
+
+func sourceWeight(source string) float64 {
+	switch source {
+	case "file":
+		return filesSourceWeight
+	case "trash":
+		return trashSourceWeight
+	case "history":
+		return historySourceWeight
+	}
+	return 1
+}
+
+// buildResults scores every candidate (path/content score from scoreFn, times its
+// source weight), sorts purely by that final score descending, caps to opts.MaxFiles,
+// and only then runs the (more expensive) section extraction on the surviving set.
+func (d *DB) buildResults(all []searchCandidate, opts SearchOptions, scoreFn func(searchCandidate) float64, sectionsFn func(string) []SearchSection) ([]SearchResult, error) {
+	type scored struct {
+		candidate searchCandidate
+		score     float64
+	}
+	scoredList := make([]scored, 0, len(all))
 	for _, c := range all {
+		scoredList = append(scoredList, scored{c, scoreFn(c) * sourceWeight(c.Source)})
+	}
+	sort.SliceStable(scoredList, func(i, j int) bool { return scoredList[i].score > scoredList[j].score })
+	if len(scoredList) > opts.MaxFiles {
+		scoredList = scoredList[:opts.MaxFiles]
+	}
+
+	results := make([]SearchResult, 0, len(scoredList))
+	for _, sc := range scoredList {
+		c := sc.candidate
 		path := c.Path
 		exists := c.Source != "trash"
 		if c.Source == "history" {
@@ -135,114 +430,10 @@ func (d *DB) SearchFiles(terms []string, opts SearchOptions) ([]SearchResult, er
 			Source:    c.Source,
 			VersionId: c.VersionId,
 			Exists:    exists,
-			Sections:  extractSections(c.Content, terms, opts.LinesPerResult, opts.MaxResultsPerFile),
+			Sections:  sectionsFn(c.Content),
 		})
 	}
 	return results, nil
-}
-
-// buildMatchExpr builds an FTS5 MATCH expression OR-ing every term across the Path and
-// Content columns, shared by all three source queries since files_fts, fileversions_fts,
-// and filetrash_fts all index the same two column names.
-func buildMatchExpr(terms []string) string {
-	matchParts := make([]string, len(terms))
-	for i, term := range terms {
-		escaped := strings.ReplaceAll(term, `"`, `""`)
-		matchParts[i] = fmt.Sprintf(`{path content}: "%s"`, escaped)
-	}
-	return strings.Join(matchParts, " OR ")
-}
-
-// searchLiveFiles queries files_fts for live-file matches, ranked by bm25 with Path
-// weighted 3x over Content. One row per FileId is guaranteed by the files table itself,
-// so no dedup is needed here.
-func (d *DB) searchLiveFiles(matchExpr string, limit int) ([]searchCandidate, error) {
-	rows, err := d.sql.Query(
-		`SELECT f.FileId, f.Path, f.Content FROM files_fts
-		 JOIN files f ON f.Id = files_fts.rowid
-		 WHERE files_fts MATCH ?
-		 ORDER BY bm25(files_fts, 3.0, 1.0) LIMIT ?`,
-		matchExpr, limit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []searchCandidate
-	for rows.Next() {
-		var c searchCandidate
-		if err := rows.Scan(&c.FileId, &c.Path, &c.Content); err != nil {
-			continue
-		}
-		c.Source = "file"
-		out = append(out, c)
-	}
-	return out, rows.Err()
-}
-
-// searchTrash queries filetrash_fts for matching trashed files, ranked by bm25. At most
-// one FileTrash row exists per FileId at a time (restore/purge always clears the prior
-// row first), and a FileId can never have both a live files row and a FileTrash row
-// (TrashFile deletes the former before inserting the latter) — so no dedup or
-// exclusion against Files is needed here either.
-func (d *DB) searchTrash(matchExpr string, limit int) ([]searchCandidate, error) {
-	rows, err := d.sql.Query(
-		`SELECT ft.FileId, ft.Path, ft.Content FROM filetrash_fts
-		 JOIN FileTrash ft ON ft.Id = filetrash_fts.rowid
-		 WHERE filetrash_fts MATCH ?
-		 ORDER BY bm25(filetrash_fts, 3.0, 1.0) LIMIT ?`,
-		matchExpr, limit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []searchCandidate
-	for rows.Next() {
-		var c searchCandidate
-		if err := rows.Scan(&c.FileId, &c.Path, &c.Content); err != nil {
-			continue
-		}
-		c.Source = "trash"
-		out = append(out, c)
-	}
-	return out, rows.Err()
-}
-
-// searchNextHistoryMatch returns the single best-scoring fileversions_fts match whose
-// FileId isn't in excludeFileIds, or found=false once no such match remains. A single
-// FileId can have many matching FileVersion rows (e.g. many near-duplicate edits), so
-// rather than fetching a batch and picking the best per FileId by comparing scores
-// (unreliable once read out of SQLite), the caller loops this one-row-at-a-time,
-// growing excludeFileIds by the FileId returned each time — ORDER BY ... LIMIT 1
-// reliably hands back the best remaining row, which is guaranteed to be a new FileId
-// since every FileId seen so far is excluded from the query.
-func (d *DB) searchNextHistoryMatch(matchExpr string, excludeFileIds map[string]bool) (searchCandidate, bool, error) {
-	query := `SELECT fv.FileId, fv.Path, fv.Content, fv.VersionId FROM fileversions_fts
-	          JOIN FileVersions fv ON fv.Id = fileversions_fts.rowid
-	          WHERE fileversions_fts MATCH ?`
-	args := []any{matchExpr}
-	if len(excludeFileIds) > 0 {
-		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(excludeFileIds)), ",")
-		query += ` AND fv.FileId NOT IN (` + placeholders + `)`
-		for id := range excludeFileIds {
-			args = append(args, id)
-		}
-	}
-	query += ` ORDER BY bm25(fileversions_fts, 3.0, 1.0) LIMIT 1`
-
-	var c searchCandidate
-	err := d.sql.QueryRow(query, args...).Scan(&c.FileId, &c.Path, &c.Content, &c.VersionId)
-	if err == sql.ErrNoRows {
-		return searchCandidate{}, false, nil
-	}
-	if err != nil {
-		return searchCandidate{}, false, err
-	}
-	c.Source = "history"
-	return c, true, nil
 }
 
 // extractSections finds up to maxResults match-line clusters in content and returns
@@ -255,22 +446,39 @@ func (d *DB) searchNextHistoryMatch(matchExpr string, excludeFileIds map[string]
 // compensate. If no line actually matches (e.g. only the path matched), a single
 // section anchored at line 1 is returned, matching the original fallback.
 func extractSections(content string, terms []string, linesPerResult, maxResults int) []SearchSection {
-	lines := strings.Split(content, "\n")
-	if len(lines) == 0 {
-		return []SearchSection{{Snippet: content, StartLineNumber: 1}}
-	}
-
 	lowerTerms := make([]string, 0, len(terms))
 	for _, t := range terms {
 		if lt := strings.ToLower(t); lt != "" {
 			lowerTerms = append(lowerTerms, lt)
 		}
 	}
+	return extractSectionsWithCounter(content, linesPerResult, maxResults, func(line string) int {
+		return countMatches(line, lowerTerms)
+	})
+}
+
+// extractSectionsRegex is extractSections' regex-mode counterpart: a line's match
+// count is however many non-overlapping times pattern matches within it, rather than
+// a count of distinct query terms present.
+func extractSectionsRegex(content string, pattern *regexp.Regexp, linesPerResult, maxResults int) []SearchSection {
+	return extractSectionsWithCounter(content, linesPerResult, maxResults, func(line string) int {
+		return len(pattern.FindAllStringIndex(line, -1))
+	})
+}
+
+// extractSectionsWithCounter holds the windowing/merging algorithm shared by
+// extractSections and extractSectionsRegex; countFn is the only thing that differs
+// between literal-term and regex matching.
+func extractSectionsWithCounter(content string, linesPerResult, maxResults int, countFn func(string) int) []SearchSection {
+	lines := strings.Split(content, "\n")
+	if len(lines) == 0 {
+		return []SearchSection{{Snippet: content, StartLineNumber: 1}}
+	}
 
 	type scoredLine struct{ idx, count int }
 	var scored []scoredLine
 	for i, line := range lines {
-		count := countMatches(line, lowerTerms)
+		count := countFn(line)
 		if count > 0 {
 			scored = append(scored, scoredLine{i, count})
 		}

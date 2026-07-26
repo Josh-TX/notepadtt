@@ -32,23 +32,6 @@ func createFileVersionsSchema(sqldb *sql.DB) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_fileversions_fileid_term_date ON FileVersions(FileId, Term, Date)`,
 		`CREATE INDEX IF NOT EXISTS idx_fileversions_term_date ON FileVersions(Term, Date)`,
-		`CREATE VIRTUAL TABLE IF NOT EXISTS fileversions_fts USING fts5(
-			Path,
-			Content,
-			content='FileVersions',
-			content_rowid='Id',
-			tokenize='trigram'
-		)`,
-		// FileVersions rows are immutable (inserted once, only ever deleted), so unlike
-		// files_fts this can safely sync via plain triggers: no per-keystroke volume
-		// concern, and a BEFORE DELETE trigger can read old.* directly since the row's
-		// content never changes between insert and delete.
-		`CREATE TRIGGER IF NOT EXISTS fileversions_ai AFTER INSERT ON FileVersions BEGIN
-			INSERT INTO fileversions_fts(rowid, Path, Content) VALUES (new.Id, new.Path, new.Content);
-		END`,
-		`CREATE TRIGGER IF NOT EXISTS fileversions_bd BEFORE DELETE ON FileVersions BEGIN
-			INSERT INTO fileversions_fts(fileversions_fts, rowid, Path, Content) VALUES ('delete', old.Id, old.Path, old.Content);
-		END`,
 	}
 	for _, stmt := range stmts {
 		if _, err := sqldb.Exec(stmt); err != nil {

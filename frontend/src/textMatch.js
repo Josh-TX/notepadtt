@@ -23,3 +23,26 @@ export function findMatchRanges(text, terms) {
   }
   return merged
 }
+
+// Regex-mode counterpart to findMatchRanges: returns merged [start, end) ranges of
+// every match of pattern within text. An invalid pattern (or one the backend accepted
+// under Go's RE2 syntax but JS's regex engine rejects) yields no highlighting rather
+// than throwing.
+export function findRegexMatchRanges(text, pattern) {
+  let re
+  try {
+    re = new RegExp(pattern, 'g')
+  } catch {
+    return []
+  }
+  const ranges = []
+  let m
+  while ((m = re.exec(text)) !== null) {
+    if (m[0].length === 0) {
+      re.lastIndex++
+      continue
+    }
+    ranges.push([m.index, m.index + m[0].length])
+  }
+  return ranges
+}

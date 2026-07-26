@@ -1,10 +1,29 @@
 package backend
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 )
+
+func searchFor(t *testing.T, db *DB, term string) []SearchResult {
+	t.Helper()
+	results, err := db.SearchFiles(term, testSearchOptions())
+	if err != nil {
+		t.Fatalf("SearchFiles(%q): %v", term, err)
+	}
+	return results
+}
+
+// testSearchOptions mirrors defaultSettings()'s search-related fields, for tests that
+// don't care about exercising non-default LinesPerResult/MaxResultsPerFile/MaxFiles.
+func testSearchOptions() SearchOptions {
+	return SearchOptions{LinesPerResult: 4, MaxResultsPerFile: 2, MaxFiles: 30}
+}
 
 func TestExtractSections(t *testing.T) {
 	t.Run("single match returns one section sized by linesPerResult", func(t *testing.T) {
@@ -143,8 +162,8 @@ func TestWindowSize(t *testing.T) {
 
 // TestSearchFiles_HistoryCollapsesManyVersionsOfSameFileToOneResult is the scenario that
 // motivated dropping score-based collapsing entirely: a file with many near-duplicate
-// matching FileVersion rows must not crowd out a distinct second file just because a
-// flat LIMIT would otherwise fill up on repeats of the first.
+// matching FileVersion rows must not crowd out a distinct second file just because it
+// contributes many raw matching rows.
 func TestSearchFiles_HistoryCollapsesManyVersionsOfSameFileToOneResult(t *testing.T) {
 	db := newTestDB(t)
 	for i := 0; i < 5; i++ {
@@ -159,7 +178,7 @@ func TestSearchFiles_HistoryCollapsesManyVersionsOfSameFileToOneResult(t *testin
 
 	opts := testSearchOptions()
 	opts.IncludeHistory = true
-	results, err := db.SearchFiles([]string{"needle"}, opts)
+	results, err := db.SearchFiles("needle", opts)
 	if err != nil {
 		t.Fatalf("SearchFiles: %v", err)
 	}
@@ -174,9 +193,10 @@ func TestSearchFiles_HistoryCollapsesManyVersionsOfSameFileToOneResult(t *testin
 	}
 }
 
-// TestSearchFiles_TrashFillsRemainingSlotsBeforeHistory locks in the cascade priority:
-// Trash is queried (and gets first claim on remaining slots) before History.
-func TestSearchFiles_TrashFillsRemainingSlotsBeforeHistory(t *testing.T) {
+// TestSearchFiles_TrashOutscoresHistoryViaSourceWeight covers the merged, score-sorted
+// result list (replacing the old strict Files-then-Trash-then-History priority order):
+// with otherwise-equal path/content scores, Trash's x2 source weight beats History's x1.
+func TestSearchFiles_TrashOutscoresHistoryViaSourceWeight(t *testing.T) {
 	db := newTestDB(t)
 	trashTestFile(t, db, "trashed.txt", "needle in trash", 1000)
 	if err := db.InsertFileVersion(FileVersion{FileId: "historied", Path: "h.txt", Content: "needle in history", VersionId: "v1", Date: 1, Term: 1}); err != nil {
@@ -187,7 +207,7 @@ func TestSearchFiles_TrashFillsRemainingSlotsBeforeHistory(t *testing.T) {
 	opts.IncludeTrash = true
 	opts.IncludeHistory = true
 	opts.MaxFiles = 1
-	results, err := db.SearchFiles([]string{"needle"}, opts)
+	results, err := db.SearchFiles("needle", opts)
 	if err != nil {
 		t.Fatalf("SearchFiles: %v", err)
 	}
@@ -195,7 +215,34 @@ func TestSearchFiles_TrashFillsRemainingSlotsBeforeHistory(t *testing.T) {
 		t.Fatalf("expected exactly 1 result given MaxFiles=1, got %+v", results)
 	}
 	if results[0].Source != "trash" {
-		t.Fatalf("expected Trash to win the single remaining slot over History, got %+v", results[0])
+		t.Fatalf("expected Trash to outscore History via source weight, got %+v", results[0])
+	}
+}
+
+// TestSearchFiles_HighScoringHistoryCanOutrankWeakerFileMatch locks in that sorting is
+// purely by final weighted score, not source priority: History's x1 source weight can
+// still beat a live File's x5 weight if the File's path/content score is weak enough.
+func TestSearchFiles_HighScoringHistoryCanOutrankWeakerFileMatch(t *testing.T) {
+	db := newTestDB(t)
+	if _, err := db.insertFileRecord("weak.txt", "needle", 0); err != nil {
+		t.Fatalf("insertFileRecord: %v", err)
+	}
+	strongContent := strings.Repeat("needle ", 10)
+	if err := db.InsertFileVersion(FileVersion{FileId: "strong", Path: "strong.txt", Content: strongContent, VersionId: "v1", Date: 1, Term: 1}); err != nil {
+		t.Fatalf("InsertFileVersion: %v", err)
+	}
+
+	opts := testSearchOptions()
+	opts.IncludeHistory = true
+	results, err := db.SearchFiles("needle", opts)
+	if err != nil {
+		t.Fatalf("SearchFiles: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected both results, got %+v", results)
+	}
+	if results[0].Source != "history" {
+		t.Fatalf("expected the heavily-repeated History match to rank first despite the lower source weight, got %+v", results)
 	}
 }
 
@@ -211,7 +258,7 @@ func TestSearchFiles_HistoryExcludesFileIdAlreadyClaimedByTrash(t *testing.T) {
 	opts := testSearchOptions()
 	opts.IncludeTrash = true
 	opts.IncludeHistory = true
-	results, err := db.SearchFiles([]string{"needle"}, opts)
+	results, err := db.SearchFiles("needle", opts)
 	if err != nil {
 		t.Fatalf("SearchFiles: %v", err)
 	}
@@ -229,19 +276,18 @@ func TestSearchFiles_HistoryExcludesFileIdAlreadyClaimedByTrash(t *testing.T) {
 		t.Fatalf("expected exactly 1 result for a FileId that's both trashed and historied, got %d: %+v", matches, results)
 	}
 	if r.Source != "trash" {
-		t.Fatalf("expected the Trash result to win since Trash is queried before History, got %+v", r)
+		t.Fatalf("expected the Trash result to win since Trash is claimed before History, got %+v", r)
 	}
 }
 
 // TestSearchFiles_FilesAloneFillingMaxFilesSkipsOtherSources ensures Trash/History never
-// contribute once Files alone has already exhausted the budget.
+// contribute once Files alone has already scored above MaxFiles' worth of results.
 func TestSearchFiles_FilesAloneFillingMaxFilesSkipsOtherSources(t *testing.T) {
 	db := newTestDB(t)
 	fileId, err := db.insertFileRecord("a.txt", "needle live", 0)
 	if err != nil {
 		t.Fatalf("insertFileRecord: %v", err)
 	}
-	db.flushFts()
 	trashTestFile(t, db, "trashed.txt", "needle trashed", 1000)
 	if err := db.InsertFileVersion(FileVersion{FileId: "historied", Path: "h.txt", Content: "needle historied", VersionId: "v1", Date: 1, Term: 1}); err != nil {
 		t.Fatalf("InsertFileVersion: %v", err)
@@ -251,12 +297,12 @@ func TestSearchFiles_FilesAloneFillingMaxFilesSkipsOtherSources(t *testing.T) {
 	opts.IncludeTrash = true
 	opts.IncludeHistory = true
 	opts.MaxFiles = 1
-	results, err := db.SearchFiles([]string{"needle"}, opts)
+	results, err := db.SearchFiles("needle", opts)
 	if err != nil {
 		t.Fatalf("SearchFiles: %v", err)
 	}
 	if len(results) != 1 || results[0].FileId != fileId || results[0].Source != "file" {
-		t.Fatalf("expected only the live file result when it alone fills MaxFiles, got %+v", results)
+		t.Fatalf("expected only the live file result when it alone outscores the rest, got %+v", results)
 	}
 }
 
@@ -276,12 +322,11 @@ func TestSearchFiles_LiveFileOnlyByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("insertFileRecord: %v", err)
 	}
-	db.flushFts()
 	if err := db.InsertFileVersion(FileVersion{FileId: "history-only", Path: "h.txt", Content: "needle in history", VersionId: "v1", Date: 1, Term: 1}); err != nil {
 		t.Fatalf("InsertFileVersion: %v", err)
 	}
 
-	results, err := db.SearchFiles([]string{"needle"}, testSearchOptions())
+	results, err := db.SearchFiles("needle", testSearchOptions())
 	if err != nil {
 		t.Fatalf("SearchFiles: %v", err)
 	}
@@ -303,7 +348,7 @@ func TestSearchFiles_IncludeHistorySurfacesOrphanedMatch(t *testing.T) {
 
 	opts := testSearchOptions()
 	opts.IncludeHistory = true
-	results, err := db.SearchFiles([]string{"needle"}, opts)
+	results, err := db.SearchFiles("needle", opts)
 	if err != nil {
 		t.Fatalf("SearchFiles: %v", err)
 	}
@@ -328,14 +373,13 @@ func TestSearchFiles_HistoryUsesLivePathWhenFileStillExists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("insertFileRecord: %v", err)
 	}
-	db.flushFts()
 	if err := db.InsertFileVersion(FileVersion{FileId: fileId, Path: "old/path.txt", Content: "needle in an old version", VersionId: "v1", Date: 1, Term: 1}); err != nil {
 		t.Fatalf("InsertFileVersion: %v", err)
 	}
 
 	opts := testSearchOptions()
 	opts.IncludeHistory = true
-	results, err := db.SearchFiles([]string{"needle"}, opts)
+	results, err := db.SearchFiles("needle", opts)
 	if err != nil {
 		t.Fatalf("SearchFiles: %v", err)
 	}
@@ -357,7 +401,6 @@ func TestSearchFiles_LiveMatchSuppressesHistoryAndTrashForSameFile(t *testing.T)
 	if err != nil {
 		t.Fatalf("insertFileRecord: %v", err)
 	}
-	db.flushFts()
 	if err := db.InsertFileVersion(FileVersion{FileId: fileId, Path: "a.txt", Content: "needle in old version too", VersionId: "v1", Date: 1, Term: 1}); err != nil {
 		t.Fatalf("InsertFileVersion: %v", err)
 	}
@@ -365,7 +408,7 @@ func TestSearchFiles_LiveMatchSuppressesHistoryAndTrashForSameFile(t *testing.T)
 	opts := testSearchOptions()
 	opts.IncludeHistory = true
 	opts.IncludeTrash = true
-	results, err := db.SearchFiles([]string{"needle"}, opts)
+	results, err := db.SearchFiles("needle", opts)
 	if err != nil {
 		t.Fatalf("SearchFiles: %v", err)
 	}
@@ -383,7 +426,7 @@ func TestSearchFiles_IncludeTrashSurfacesDeletedFile(t *testing.T) {
 
 	opts := testSearchOptions()
 	opts.IncludeTrash = true
-	results, err := db.SearchFiles([]string{"needle"}, opts)
+	results, err := db.SearchFiles("needle", opts)
 	if err != nil {
 		t.Fatalf("SearchFiles: %v", err)
 	}
@@ -403,7 +446,7 @@ func TestSearchFiles_TrashExcludedWhenToggleOff(t *testing.T) {
 	db := newTestDB(t)
 	fileId := trashTestFile(t, db, "deleted.txt", "needle in trashed content", 1000)
 
-	results, err := db.SearchFiles([]string{"needle"}, testSearchOptions())
+	results, err := db.SearchFiles("needle", testSearchOptions())
 	if err != nil {
 		t.Fatalf("SearchFiles: %v", err)
 	}
@@ -419,11 +462,10 @@ func TestSearchFiles_RespectsMaxFiles(t *testing.T) {
 			t.Fatalf("insertFileRecord: %v", err)
 		}
 	}
-	db.flushFts()
 
 	opts := testSearchOptions()
 	opts.MaxFiles = 2
-	results, err := db.SearchFiles([]string{"needle"}, opts)
+	results, err := db.SearchFiles("needle", opts)
 	if err != nil {
 		t.Fatalf("SearchFiles: %v", err)
 	}
@@ -432,13 +474,235 @@ func TestSearchFiles_RespectsMaxFiles(t *testing.T) {
 	}
 }
 
-func TestSearchFiles_EmptyTermsReturnsNil(t *testing.T) {
+func TestSearchFiles_EmptyQueryReturnsNil(t *testing.T) {
 	db := newTestDB(t)
-	results, err := db.SearchFiles(nil, testSearchOptions())
+	results, err := db.SearchFiles("", testSearchOptions())
 	if err != nil {
 		t.Fatalf("SearchFiles: %v", err)
 	}
 	if results != nil {
-		t.Fatalf("expected nil results for empty terms, got %+v", results)
+		t.Fatalf("expected nil results for empty query, got %+v", results)
+	}
+	results, err = db.SearchFiles("   ", testSearchOptions())
+	if err != nil {
+		t.Fatalf("SearchFiles: %v", err)
+	}
+	if results != nil {
+		t.Fatalf("expected nil results for whitespace-only query, got %+v", results)
+	}
+}
+
+// TestSearchFilesLike_EscapesWildcardCharactersInTerms is the regression guard for the
+// spec's explicit requirement: a literal % or _ in a search term must not act as a
+// SQL LIKE wildcard.
+func TestSearchFilesLike_EscapesWildcardCharactersInTerms(t *testing.T) {
+	db := newTestDB(t)
+	literalId, err := db.insertFileRecord("literal.txt", "hello%world", 0)
+	if err != nil {
+		t.Fatalf("insertFileRecord: %v", err)
+	}
+	if _, err := db.insertFileRecord("wildcardvictim.txt", "helloXworld", 1); err != nil {
+		t.Fatalf("insertFileRecord: %v", err)
+	}
+
+	results, err := db.SearchFiles("o%w", testSearchOptions())
+	if err != nil {
+		t.Fatalf("SearchFiles: %v", err)
+	}
+	if len(results) != 1 || results[0].FileId != literalId {
+		t.Fatalf("expected only the literal '%%' match, got %+v", results)
+	}
+}
+
+// TestSearchFilesLike_TermsShorterThanMinimumAreIgnored covers the spec's carryover of
+// the old FTS5-implied 2-character floor on non-regex query terms.
+func TestSearchFilesLike_TermsShorterThanMinimumAreIgnored(t *testing.T) {
+	db := newTestDB(t)
+	if _, err := db.insertFileRecord("a.txt", "bb only, no single-letter term here", 0); err != nil {
+		t.Fatalf("insertFileRecord: %v", err)
+	}
+
+	// The 1-character term "a" is below the minimum and should be dropped entirely,
+	// leaving only "bb" as a significant term.
+	results, err := db.SearchFiles("a bb", testSearchOptions())
+	if err != nil {
+		t.Fatalf("SearchFiles: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 match via the surviving 'bb' term, got %+v", results)
+	}
+
+	// A query consisting only of sub-minimum terms has no significant terms at all.
+	results, err = db.SearchFiles("a", testSearchOptions())
+	if err != nil {
+		t.Fatalf("SearchFiles: %v", err)
+	}
+	if results != nil {
+		t.Fatalf("expected nil results for an all-too-short query, got %+v", results)
+	}
+}
+
+// TestSearchFilesLike_DistinctTermCountBoostsScoreOverRawOccurrenceCount verifies the
+// multiplier is 1 + 0.5*distinctTermCount computed once across path+content combined,
+// so a file matching more distinct terms can outrank one with more raw occurrences of
+// a single term.
+func TestSearchFilesLike_DistinctTermCountBoostsScoreOverRawOccurrenceCount(t *testing.T) {
+	db := newTestDB(t)
+	// rawRepeat: "alpha" appears twice, "beta" never -> occurrences=2, distinct=1.
+	rawRepeatId, err := db.insertFileRecord("rawrepeat.txt", "alpha alpha", 0)
+	if err != nil {
+		t.Fatalf("insertFileRecord: %v", err)
+	}
+	// bothTerms: "alpha" and "beta" once each -> occurrences=2, distinct=2.
+	bothTermsId, err := db.insertFileRecord("bothterms.txt", "alpha beta", 1)
+	if err != nil {
+		t.Fatalf("insertFileRecord: %v", err)
+	}
+
+	results, err := db.SearchFiles("alpha beta", testSearchOptions())
+	if err != nil {
+		t.Fatalf("SearchFiles: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected both files matched, got %+v", results)
+	}
+	if results[0].FileId != bothTermsId || results[1].FileId != rawRepeatId {
+		t.Fatalf("expected the 2-distinct-term match to outrank the same-occurrence-count single-term repeat, got %+v", results)
+	}
+}
+
+// TestSearchFilesLike_PathMatchWeightedHigherThanContentMatch verifies PathWeight=3:
+// a single occurrence in Path should outscore a single occurrence in Content.
+func TestSearchFilesLike_PathMatchWeightedHigherThanContentMatch(t *testing.T) {
+	db := newTestDB(t)
+	pathMatchId, err := db.insertFileRecord("needlefile.txt", "unrelated text", 0)
+	if err != nil {
+		t.Fatalf("insertFileRecord: %v", err)
+	}
+	contentMatchId, err := db.insertFileRecord("plain.txt", "needle", 1)
+	if err != nil {
+		t.Fatalf("insertFileRecord: %v", err)
+	}
+
+	results, err := db.SearchFiles("needle", testSearchOptions())
+	if err != nil {
+		t.Fatalf("SearchFiles: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected both files matched, got %+v", results)
+	}
+	if results[0].FileId != pathMatchId || results[1].FileId != contentMatchId {
+		t.Fatalf("expected the path match to outrank the content-only match, got %+v", results)
+	}
+}
+
+// TestScoreRegex_MatchesStrictlyPerLine verifies '^'/'$' behave as per-line anchors
+// (no cross-line matching, no (?m) flag): tested directly against scoreRegex since
+// windowing/section-merging would otherwise obscure which lines actually matched.
+func TestScoreRegex_MatchesStrictlyPerLine(t *testing.T) {
+	pattern := regexp.MustCompile(`^bar$`)
+	// "xbar" and "barx" both contain "bar" as a substring but aren't equal to it, so
+	// with correct per-line ^/$ anchoring only the middle line should count as a match.
+	score := scoreRegex("", "xbar\nbar\nbarx", pattern)
+	if score != 1 {
+		t.Fatalf("expected exactly 1 per-line match (only the exact 'bar' line), got score=%v", score)
+	}
+}
+
+// TestSearchFilesRegex_MultipleMatchesOnOneLineEachCountSeparately verifies that
+// repeated non-overlapping matches on a single line each add to the occurrence count,
+// which should out-rank a file with only one match given otherwise-equal content.
+func TestSearchFilesRegex_MultipleMatchesOnOneLineEachCountSeparately(t *testing.T) {
+	db := newTestDB(t)
+	manyId, err := db.insertFileRecord("many.txt", "aaa", 0)
+	if err != nil {
+		t.Fatalf("insertFileRecord: %v", err)
+	}
+	oneId, err := db.insertFileRecord("one.txt", "a", 1)
+	if err != nil {
+		t.Fatalf("insertFileRecord: %v", err)
+	}
+
+	opts := testSearchOptions()
+	opts.Regex = true
+	results, err := db.SearchFiles("a", opts)
+	if err != nil {
+		t.Fatalf("SearchFiles: %v", err)
+	}
+	if len(results) != 2 || results[0].FileId != manyId || results[1].FileId != oneId {
+		t.Fatalf("expected the file with 3 matches to outrank the file with 1, got %+v", results)
+	}
+}
+
+// TestSearchFilesRegex_NoMinimumLength verifies regex mode has no counterpart to the
+// non-regex 2-character term floor: a single-character pattern still searches.
+func TestSearchFilesRegex_NoMinimumLength(t *testing.T) {
+	db := newTestDB(t)
+	if _, err := db.insertFileRecord("z.txt", "zzz content", 0); err != nil {
+		t.Fatalf("insertFileRecord: %v", err)
+	}
+
+	opts := testSearchOptions()
+	opts.Regex = true
+	results, err := db.SearchFiles("z", opts)
+	if err != nil {
+		t.Fatalf("SearchFiles: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1-character regex pattern to still match, got %+v", results)
+	}
+}
+
+// TestSearchFilesRegex_InvalidPatternReturnsRegexCompileError covers the spec's
+// requirement that an uncompilable pattern surfaces as a distinguishable error rather
+// than running (or silently matching nothing).
+func TestSearchFilesRegex_InvalidPatternReturnsRegexCompileError(t *testing.T) {
+	db := newTestDB(t)
+	opts := testSearchOptions()
+	opts.Regex = true
+	_, err := db.SearchFiles("(unterminated", opts)
+	if err == nil {
+		t.Fatalf("expected an error for an invalid regex pattern")
+	}
+	var regexErr *RegexCompileError
+	if !errors.As(err, &regexErr) {
+		t.Fatalf("expected a *RegexCompileError, got %T: %v", err, err)
+	}
+}
+
+// TestHandleSearch_InvalidRegexReturns400 verifies handleSearch maps a regex compile
+// failure to 400 (so the frontend can show an inline error) rather than 500.
+func TestHandleSearch_InvalidRegexReturns400(t *testing.T) {
+	s := newTestServer(t)
+	req := httptest.NewRequest("GET", "/api/search?q=(unterminated&regex=true", nil)
+	w := httptest.NewRecorder()
+	s.handleSearch(w, req)
+	if w.Code != 400 {
+		t.Fatalf("expected 400 for an invalid regex pattern, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleSearch_RegexParamEnablesRegexMode is an end-to-end sanity check that the
+// ?regex=true query param actually threads through to regex-mode matching: "foo.ar"
+// isn't a literal substring of "foobar", so a match only happens if '.' was treated
+// as a regex wildcard rather than as a literal LIKE-mode term.
+func TestHandleSearch_RegexParamEnablesRegexMode(t *testing.T) {
+	s := newTestServer(t)
+	if _, err := s.db.insertFileRecord("a.txt", "foobar", 0); err != nil {
+		t.Fatalf("insertFileRecord: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/api/search?q=foo.ar&regex=true", nil)
+	w := httptest.NewRecorder()
+	s.handleSearch(w, req)
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var results []SearchResult
+	if err := json.Unmarshal(w.Body.Bytes(), &results); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(results) != 1 || results[0].Path != "a.txt" {
+		t.Fatalf("expected a.txt matched via regex, got %+v", results)
 	}
 }

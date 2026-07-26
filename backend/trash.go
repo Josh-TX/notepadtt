@@ -37,22 +37,6 @@ func createFileTrashSchema(sqldb *sql.DB) error {
 			DateDeleted INTEGER,
 			Size INTEGER
 		)`,
-		`CREATE VIRTUAL TABLE IF NOT EXISTS filetrash_fts USING fts5(
-			Path,
-			Content,
-			content='FileTrash',
-			content_rowid='Id',
-			tokenize='trigram'
-		)`,
-		// Mirrors fileversions_fts: FileTrash rows are never updated in place (only
-		// inserted or deleted — restore, Delete Forever, Empty Trash, and the TTL sweep
-		// are all plain DELETEs), so a BEFORE DELETE trigger reading old.* directly is safe.
-		`CREATE TRIGGER IF NOT EXISTS filetrash_ai AFTER INSERT ON FileTrash BEGIN
-			INSERT INTO filetrash_fts(rowid, Path, Content) VALUES (new.Id, new.Path, new.Content);
-		END`,
-		`CREATE TRIGGER IF NOT EXISTS filetrash_bd BEFORE DELETE ON FileTrash BEGIN
-			INSERT INTO filetrash_fts(filetrash_fts, rowid, Path, Content) VALUES ('delete', old.Id, old.Path, old.Content);
-		END`,
 	}
 	for _, stmt := range stmts {
 		if _, err := sqldb.Exec(stmt); err != nil {
@@ -73,7 +57,6 @@ func (d *DB) TrashFile(fileId, relPath, content string, dateDeleted int64) error
 	if err != nil {
 		return err
 	}
-	d.MarkDirty(fileId)
 	n, err := res.RowsAffected()
 	if err != nil {
 		return err

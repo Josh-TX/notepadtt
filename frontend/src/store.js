@@ -23,6 +23,7 @@ const state = reactive({
   searchResults: [],
   searchIncludeHistory: false, // live SearchModal toggle; always starts unchecked
   searchIncludeTrash: false,   // live SearchModal toggle; always starts unchecked
+  searchIncludeRegex: false,   // live SearchModal toggle; always starts unchecked
   historyModalOpen: false,
   historyModalFile: null,   // { fileId, name, path } of the file History was opened for
   historyModalVersionId: null,     // deep-link: version to auto-select (set by a History search result click)
