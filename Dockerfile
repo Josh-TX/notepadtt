@@ -23,13 +23,12 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
 RUN mkdir /data
 
 # Stage 3 - minimal runtime image
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12
 
 COPY --from=go-build /notepadtt /notepadtt
-COPY --from=go-build --chown=nonroot:nonroot /data /data
+COPY --from=go-build /data /data
 
 VOLUME /data
 EXPOSE 8080
-USER nonroot:nonroot
 
 ENTRYPOINT ["/notepadtt", "-d", "/data"]
