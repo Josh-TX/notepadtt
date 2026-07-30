@@ -1,0 +1,7 @@
+notepadtt
+frontend/node_modules
+frontend/dist
+dist
+*.db
+__debug*
+.git
