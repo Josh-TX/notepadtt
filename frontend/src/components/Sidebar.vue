@@ -84,7 +84,7 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { store, closeSidebar, setActiveFile, setFileVersion, onTreeUpdate, openSearchModal, openHistoryModal, openTrashModal, openSettingsModal, openMoveModal, showToast, getFolderNode, folderOfPath } from '../store.js'
+import { store, closeSidebar, setActiveFile, setFileVersion, onTreeUpdate, openSearchModal, openHistoryModal, openTrashModal, openSettingsModal, openMoveModal, showToast, getFolderNode, folderOfPath, willBeTracked } from '../store.js'
 import { createFile, createFolder, deleteFolder, renameFolder, getFile, renameFile, deleteFile, duplicateFile, updateSidebarWidth, updateDesktopSidebarOpen, moveFile, moveFolder } from '../api.js'
 import { restoreAndOpen } from '../restore.js'
 import FileTree from './FileTree.vue'
@@ -459,6 +459,9 @@ async function doRenameFile(file) {
   menuFile.value = null
   const newName = window.prompt('Rename file:', file.name)
   if (!newName || newName === file.name) return
+  if (!willBeTracked(newName)) {
+    if (!confirm(`"${newName}" doesn't have a common text file extension, so it won't be tracked (no history, search, or version recovery). Enable "All Files" under Settings if you want it tracked.`)) return
+  }
   await renameFile(file.fileId, newName)
 }
 

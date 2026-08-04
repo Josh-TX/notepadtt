@@ -3,6 +3,7 @@ package backend
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -33,6 +34,22 @@ type Settings struct {
 	MarkdownMode       int    `json:"markdownMode"`       // 0=all new files, 1=all files without extension, 2=only .md files
 	ColorOverrides     string `json:"colorOverrides"`     // comma-separated key=color pairs, e.g. "keyword=#569cd6, header=#4babfd"
 	Title              string `json:"title"`              // HTML <title> tag value
+	OnlyTextExt        bool   `json:"onlyTextExt"`        // "File Extension to Track": true = only common text-file extensions are tracked; false = all files
+}
+
+// SettingsResponse is what GET/PUT /api/settings actually serialize: the persisted
+// Settings plus the read-only TextExtensions list (from the backend's allowedExtensions
+// map), letting the frontend predict IsAllowedPath's outcome — e.g. to warn before a
+// rename that would untrack a file — without a round-trip. TextExtensions is kept out
+// of the Settings struct itself (rather than populated by setSettingsCache) so Settings
+// stays comparable with ==, which the test suite relies on.
+type SettingsResponse struct {
+	Settings
+	TextExtensions []string `json:"textExtensions"`
+}
+
+func settingsResponse(s Settings) SettingsResponse {
+	return SettingsResponse{Settings: s, TextExtensions: textExtensionsList}
 }
 
 func defaultSettings() Settings {
@@ -59,6 +76,7 @@ func defaultSettings() Settings {
 		MarkdownMode:       0,
 		ColorOverrides:     "keyword=#569cd6, header=#54b0ff",
 		Title:              "notepadtt",
+		OnlyTextExt:        true,
 	}
 }
 
@@ -83,9 +101,16 @@ func createSettingsSchema(sqldb *sql.DB) error {
 		DesktopSidebarOpen INTEGER,
 		MarkdownMode INTEGER,
 		ColorOverrides TEXT,
-		Title TEXT
+		Title TEXT,
+		OnlyTextExt INTEGER
 	)`)
 	if err != nil {
+		return err
+	}
+	// Migration for prod DBs created before OnlyTextExt existed: CREATE TABLE IF NOT
+	// EXISTS above is a no-op against an already-existing Settings table, so the column
+	// needs to be added explicitly if missing.
+	if err := addColumnIfMissing(sqldb, "Settings", "OnlyTextExt", "INTEGER NOT NULL DEFAULT 1"); err != nil {
 		return err
 	}
 	var count int
@@ -98,17 +123,43 @@ func createSettingsSchema(sqldb *sql.DB) error {
 	return insertSettingsRow(sqldb, defaultSettings())
 }
 
+// addColumnIfMissing runs `ALTER TABLE ... ADD COLUMN` only if the column doesn't
+// already exist, making schema evolution idempotent without a migration framework.
+func addColumnIfMissing(sqldb *sql.DB, table, column, decl string) error {
+	rows, err := sqldb.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, ctype string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		if strings.EqualFold(name, column) {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = sqldb.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column, decl))
+	return err
+}
+
 func insertSettingsRow(sqldb *sql.DB, s Settings) error {
 	_, err := sqldb.Exec(`INSERT INTO Settings (
 		TabCloseIcon, WordWrap, CtrlFSearch,
 		LinesPerResult, MaxResultsPerFile, MaxFiles, TrashTTL, ShortTermTTL, ShortTermMinDelay,
 		MedTermTTL, MedTermMinDelay, LongTermTTL, LongTermMinDelay,
-		EditorFontSize, SidebarWidth, DesktopSidebarOpen, MarkdownMode, ColorOverrides, Title
-	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		EditorFontSize, SidebarWidth, DesktopSidebarOpen, MarkdownMode, ColorOverrides, Title, OnlyTextExt
+	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		s.TabCloseIcon, s.WordWrap, s.CtrlFSearch,
 		s.LinesPerResult, s.MaxResultsPerFile, s.MaxFiles, s.TrashTTL, s.ShortTermTTL, s.ShortTermMinDelay,
 		s.MedTermTTL, s.MedTermMinDelay, s.LongTermTTL, s.LongTermMinDelay,
-		s.EditorFontSize, s.SidebarWidth, s.DesktopSidebarOpen, s.MarkdownMode, s.ColorOverrides, s.Title)
+		s.EditorFontSize, s.SidebarWidth, s.DesktopSidebarOpen, s.MarkdownMode, s.ColorOverrides, s.Title, s.OnlyTextExt)
 	return err
 }
 
@@ -120,12 +171,12 @@ func (d *DB) GetSettings() (Settings, error) {
 		TabCloseIcon, WordWrap, CtrlFSearch,
 		LinesPerResult, MaxResultsPerFile, MaxFiles, TrashTTL, ShortTermTTL, ShortTermMinDelay,
 		MedTermTTL, MedTermMinDelay, LongTermTTL, LongTermMinDelay,
-		EditorFontSize, SidebarWidth, DesktopSidebarOpen, MarkdownMode, ColorOverrides, Title
+		EditorFontSize, SidebarWidth, DesktopSidebarOpen, MarkdownMode, ColorOverrides, Title, OnlyTextExt
 		FROM Settings LIMIT 1`).
 		Scan(&s.TabCloseIcon, &s.WordWrap, &s.CtrlFSearch,
 			&s.LinesPerResult, &s.MaxResultsPerFile, &s.MaxFiles, &s.TrashTTL, &s.ShortTermTTL, &s.ShortTermMinDelay,
 			&s.MedTermTTL, &s.MedTermMinDelay, &s.LongTermTTL, &s.LongTermMinDelay,
-			&s.EditorFontSize, &s.SidebarWidth, &s.DesktopSidebarOpen, &s.MarkdownMode, &s.ColorOverrides, &s.Title)
+			&s.EditorFontSize, &s.SidebarWidth, &s.DesktopSidebarOpen, &s.MarkdownMode, &s.ColorOverrides, &s.Title, &s.OnlyTextExt)
 	return s, err
 }
 
@@ -141,11 +192,11 @@ func (d *DB) SaveSettings(s Settings) error {
 		TabCloseIcon=?, WordWrap=?, CtrlFSearch=?,
 		LinesPerResult=?, MaxResultsPerFile=?, MaxFiles=?, TrashTTL=?, ShortTermTTL=?, ShortTermMinDelay=?,
 		MedTermTTL=?, MedTermMinDelay=?, LongTermTTL=?, LongTermMinDelay=?,
-		EditorFontSize=?, SidebarWidth=?, DesktopSidebarOpen=?, MarkdownMode=?, ColorOverrides=?, Title=?`,
+		EditorFontSize=?, SidebarWidth=?, DesktopSidebarOpen=?, MarkdownMode=?, ColorOverrides=?, Title=?, OnlyTextExt=?`,
 		s.TabCloseIcon, s.WordWrap, s.CtrlFSearch,
 		s.LinesPerResult, s.MaxResultsPerFile, s.MaxFiles, s.TrashTTL, s.ShortTermTTL, s.ShortTermMinDelay,
 		s.MedTermTTL, s.MedTermMinDelay, s.LongTermTTL, s.LongTermMinDelay,
-		s.EditorFontSize, s.SidebarWidth, s.DesktopSidebarOpen, s.MarkdownMode, s.ColorOverrides, s.Title)
+		s.EditorFontSize, s.SidebarWidth, s.DesktopSidebarOpen, s.MarkdownMode, s.ColorOverrides, s.Title, s.OnlyTextExt)
 	return err
 }
 

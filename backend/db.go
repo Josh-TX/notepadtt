@@ -25,11 +25,19 @@ var allowedExtensions = map[string]bool{
 	".conf": true,
 }
 
-var allowedFilenames = map[string]bool{
-	"Dockerfile": true,
-}
-
 var newNPattern = regexp.MustCompile(`^new \d+$`)
+
+// textExtensionsList is the sorted allowedExtensions keys, exposed to the frontend via
+// the settings API so it can predict IsAllowedPath's outcome without a round-trip
+// (e.g. to warn before a rename that would untrack a file).
+var textExtensionsList = func() []string {
+	list := make([]string, 0, len(allowedExtensions))
+	for ext := range allowedExtensions {
+		list = append(list, ext)
+	}
+	sort.Strings(list)
+	return list
+}()
 
 type DBFile struct {
 	FileId     string
@@ -80,9 +88,6 @@ func NewDB(root string) (*DB, error) {
 	}
 
 	db := &DB{sql: sqldb, root: root}
-	if err := db.startupScan(); err != nil {
-		return nil, err
-	}
 	settings, err := db.GetSettings()
 	if err != nil {
 		return nil, err
@@ -90,15 +95,33 @@ func NewDB(root string) (*DB, error) {
 	if err := setSettingsCache(settings); err != nil {
 		return nil, err
 	}
+	if err := db.Scan(); err != nil {
+		return nil, err
+	}
 	return db, nil
 }
 
+// IsAllowedPath reports whether relPath should be tracked, honoring the live
+// onlyTextExt setting: when false, every path is allowed; when true, only paths
+// matching isTextExtension are.
 func (d *DB) IsAllowedPath(relPath string) bool {
+	if !GetSettingsCache().OnlyTextExt {
+		return true
+	}
+	return isTextExtension(relPath)
+}
+
+// isTextExtension reports whether relPath's name matches a tracked-by-default
+// extension or the "new N" auto-created-file pattern, independent of the
+// onlyTextExt setting. Used both by IsAllowedPath and by CleanupNonTextExtension
+// (which only ever runs while onlyTextExt is true, but checks the raw rule
+// directly rather than going through the setting-aware wrapper).
+func isTextExtension(relPath string) bool {
 	name := filepath.Base(relPath)
 	if newNPattern.MatchString(name) {
 		return true
 	}
-	return allowedExtensions[filepath.Ext(name)] || allowedFilenames[name]
+	return allowedExtensions[filepath.Ext(name)]
 }
 
 func (d *DB) IsTracked(relPath string) bool {
@@ -107,7 +130,12 @@ func (d *DB) IsTracked(relPath string) bool {
 	return count > 0
 }
 
-func (d *DB) startupScan() error {
+// Scan reconciles the DB against disk: tracks new allowed files, updates content that
+// changed on disk while the app wasn't running, trashes DB entries for files removed
+// from disk, and — when onlyTextExt is enabled — purges any tracked/trashed file whose
+// path now has a disallowed extension (see CleanupNonTextExtension). Runs once at
+// startup; also the basis for a future on-demand "scan" trigger.
+func (d *DB) Scan() error {
 	// load existing DB records
 	rows, err := d.sql.Query(`SELECT FileId, Path, Content, ContentUpdated, VersionId FROM files`)
 	if err != nil {
@@ -198,7 +226,72 @@ func (d *DB) startupScan() error {
 		}
 	}
 
+	if GetSettingsCache().OnlyTextExt {
+		if err := d.CleanupNonTextExtension(""); err != nil {
+			return err
+		}
+	}
+
 	return nil
+}
+
+// CleanupNonTextExtension purges DB rows across Files, FileVersions, and FileTrash for
+// any FileId whose current (Files.Path if tracked, else FileTrash.Path if trashed) path
+// has a disallowed extension. Disk files are never touched. If scopeFileId is non-empty,
+// only that FileId is checked (used right after a rename); otherwise every FileId
+// referenced by Files or FileTrash is scanned. FileIds with no Files or FileTrash row
+// (orphaned FileVersions only) are left alone.
+func (d *DB) CleanupNonTextExtension(scopeFileId string) error {
+	fileIds := map[string]bool{}
+	if scopeFileId != "" {
+		fileIds[scopeFileId] = true
+	} else {
+		for _, table := range []string{"files", "FileTrash"} {
+			rows, err := d.sql.Query(fmt.Sprintf(`SELECT DISTINCT FileId FROM %s`, table))
+			if err != nil {
+				return err
+			}
+			for rows.Next() {
+				var id string
+				if err := rows.Scan(&id); err != nil {
+					rows.Close()
+					return err
+				}
+				fileIds[id] = true
+			}
+			rows.Close()
+		}
+	}
+
+	for fileId := range fileIds {
+		path, ok := d.currentOrTrashedPath(fileId)
+		if !ok || isTextExtension(path) {
+			continue
+		}
+		if _, err := d.sql.Exec(`DELETE FROM files WHERE FileId=?`, fileId); err != nil {
+			return err
+		}
+		if _, err := d.sql.Exec(`DELETE FROM FileTrash WHERE FileId=?`, fileId); err != nil {
+			return err
+		}
+		if _, err := d.sql.Exec(`DELETE FROM FileVersions WHERE FileId=?`, fileId); err != nil {
+			return err
+		}
+		log.Printf("cleanup: purged non-text-extension records for %s", path)
+	}
+	return nil
+}
+
+// currentOrTrashedPath returns a FileId's current Files.Path if tracked, else its
+// FileTrash.Path if trashed, else ok=false.
+func (d *DB) currentOrTrashedPath(fileId string) (path string, ok bool) {
+	if err := d.sql.QueryRow(`SELECT Path FROM files WHERE FileId=?`, fileId).Scan(&path); err == nil {
+		return path, true
+	}
+	if err := d.sql.QueryRow(`SELECT Path FROM FileTrash WHERE FileId=?`, fileId).Scan(&path); err == nil {
+		return path, true
+	}
+	return "", false
 }
 
 func (d *DB) insertFileRecord(relPath, content string, orderNum int) (string, error) {

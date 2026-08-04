@@ -8,6 +8,14 @@
         </div>
         <div class="settings-body">
           <section class="field-row">
+            <label>File Extension to Track</label>
+            <select v-model="form.onlyTextExt">
+              <option :value="true">Common Text Files</option>
+              <option :value="false">All Files</option>
+            </select>
+          </section>
+
+          <section class="field-row">
             <label>Html Title</label>
             <input type="text" class="title-input" v-model="form.title" />
           </section>
@@ -135,6 +143,10 @@ function onOverlayClick(e) {
 }
 
 async function save() {
+  if (form.value.onlyTextExt && !store.settings?.onlyTextExt) {
+    const msg = 'Switching to "Common Text Files" will permanently delete tracked history (versions, trash) for any files with a non-text extension. The files themselves on disk are unaffected. Continue?'
+    if (!confirm(msg)) return
+  }
   try {
     const saved = await saveSettings(form.value)
     store.settings = saved

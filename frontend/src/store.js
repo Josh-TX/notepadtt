@@ -225,6 +225,19 @@ export function closeTrashModal() {
 export function openSettingsModal() { state.settingsModalOpen = true }
 export function closeSettingsModal() { state.settingsModalOpen = false }
 
+const NEW_N_PATTERN = /^new \d+$/
+
+// willBeTracked predicts the backend's IsAllowedPath outcome for a given filename,
+// using the onlyTextExt/textExtensions settings — lets rename UI warn before calling
+// the API rather than after.
+export function willBeTracked(name) {
+  if (!state.settings?.onlyTextExt) return true
+  if (NEW_N_PATTERN.test(name)) return true
+  const dotIndex = name.lastIndexOf('.')
+  const ext = dotIndex === -1 ? '' : name.slice(dotIndex)
+  return (state.settings.textExtensions || []).includes(ext)
+}
+
 export function openMoveModal(item) {
   state.moveModalItem = item
   state.moveModalOpen = true

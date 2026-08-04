@@ -181,6 +181,12 @@ func (s *Server) handleRenameFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.db.UpdatePath(f.Path, newRelPath)
+	// If the new name has a disallowed extension while onlyTextExt is enabled, the file
+	// is no longer trackable — purge its Files/FileVersions/FileTrash records (the
+	// frontend already warned the user via confirm() before calling this endpoint).
+	if !s.db.IsAllowedPath(newRelPath) {
+		s.db.CleanupNonTextExtension(fileId)
+	}
 	s.broadcastTree("API: file renamed")
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -666,7 +672,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 // refreshed on every successful save (see setSettingsCache).
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(GetSettingsCache())
+	json.NewEncoder(w).Encode(settingsResponse(GetSettingsCache()))
 }
 
 // handleSaveSettings replaces the entire Settings row atomically — the modal's single
@@ -683,6 +689,7 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	wasOnlyTextExt := GetSettingsCache().OnlyTextExt
 	if err := s.db.SaveSettings(body); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -691,8 +698,18 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Turning onlyTextExt on purges any already-tracked/trashed non-text files (and
+	// their version history) so the invariant "no non-text extension anywhere in the
+	// DB" holds going forward — disk files are untouched.
+	if body.OnlyTextExt && !wasOnlyTextExt {
+		if err := s.db.CleanupNonTextExtension(""); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		s.broadcastTree("API: onlyTextExt enabled, cleaned up non-text files")
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(body)
+	json.NewEncoder(w).Encode(settingsResponse(GetSettingsCache()))
 }
 
 // handleUpdateWrap persists just the WordWrap field, independent of the Settings

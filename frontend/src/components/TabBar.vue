@@ -39,7 +39,7 @@
 
 <script setup>
 import { computed, ref, watch, nextTick, onMounted } from 'vue'
-import { store, setActiveFile, setFileVersion, getFilesInFolder, openHistoryModal, openMoveModal, showToast } from '../store.js'
+import { store, setActiveFile, setFileVersion, getFilesInFolder, openHistoryModal, openMoveModal, showToast, willBeTracked } from '../store.js'
 import { getFile, renameFile, deleteFile, duplicateFile, reorderFile } from '../api.js'
 import { restoreAndOpen } from '../restore.js'
 import ContextMenu from './ContextMenu.vue'
@@ -98,6 +98,9 @@ async function doRename(file) {
   menuFile.value = null
   const newName = window.prompt('Rename file:', file.name)
   if (!newName || newName === file.name) return
+  if (!willBeTracked(newName)) {
+    if (!confirm(`"${newName}" doesn't have a common text file extension, so it won't be tracked (no history, search, or version recovery). Enable "All Files" under Settings if you want it tracked.`)) return
+  }
   await renameFile(file.fileId, newName)
 }
 
