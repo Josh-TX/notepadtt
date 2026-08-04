@@ -17,7 +17,8 @@ type Settings struct {
 	CtrlFSearch       bool   `json:"ctrlFSearch"`  // true = Ctrl+F opens the Search Modal; false = native browser find
 	LinesPerResult    int    `json:"linesPerResult"`
 	MaxResultsPerFile int    `json:"maxResultsPerFile"`
-	MaxFiles          int    `json:"maxFiles"` // cap on distinct files returned by a search, across all sources combined
+	MaxFiles          int    `json:"maxFiles"`      // cap on distinct files returned by a search, across all sources combined
+	MaxFileSizeKB     int    `json:"maxFileSizeKB"` // files (on-disk size, 1 KB = 1000 bytes) over this are tracked (visible in FileTree) but their content is never read into the DB, and GET /api/files/{id} 400s instead of serving them
 
 	TrashTTL string `json:"trashTTL"`
 
@@ -60,6 +61,7 @@ func defaultSettings() Settings {
 		LinesPerResult:    4,
 		MaxResultsPerFile: 2,
 		MaxFiles:          30,
+		MaxFileSizeKB:     1000,
 
 		TrashTTL: "30d",
 
@@ -113,6 +115,10 @@ func createSettingsSchema(sqldb *sql.DB) error {
 	if err := addColumnIfMissing(sqldb, "Settings", "OnlyTextExt", "INTEGER NOT NULL DEFAULT 1"); err != nil {
 		return err
 	}
+	// Migration for prod DBs created before MaxFileSizeKB existed.
+	if err := addColumnIfMissing(sqldb, "Settings", "MaxFileSizeKB", fmt.Sprintf("INTEGER NOT NULL DEFAULT %d", defaultSettings().MaxFileSizeKB)); err != nil {
+		return err
+	}
 	var count int
 	if err := sqldb.QueryRow(`SELECT COUNT(*) FROM Settings`).Scan(&count); err != nil {
 		return err
@@ -152,12 +158,12 @@ func addColumnIfMissing(sqldb *sql.DB, table, column, decl string) error {
 func insertSettingsRow(sqldb *sql.DB, s Settings) error {
 	_, err := sqldb.Exec(`INSERT INTO Settings (
 		TabCloseIcon, WordWrap, CtrlFSearch,
-		LinesPerResult, MaxResultsPerFile, MaxFiles, TrashTTL, ShortTermTTL, ShortTermMinDelay,
+		LinesPerResult, MaxResultsPerFile, MaxFiles, MaxFileSizeKB, TrashTTL, ShortTermTTL, ShortTermMinDelay,
 		MedTermTTL, MedTermMinDelay, LongTermTTL, LongTermMinDelay,
 		EditorFontSize, SidebarWidth, DesktopSidebarOpen, MarkdownMode, ColorOverrides, Title, OnlyTextExt
-	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		s.TabCloseIcon, s.WordWrap, s.CtrlFSearch,
-		s.LinesPerResult, s.MaxResultsPerFile, s.MaxFiles, s.TrashTTL, s.ShortTermTTL, s.ShortTermMinDelay,
+		s.LinesPerResult, s.MaxResultsPerFile, s.MaxFiles, s.MaxFileSizeKB, s.TrashTTL, s.ShortTermTTL, s.ShortTermMinDelay,
 		s.MedTermTTL, s.MedTermMinDelay, s.LongTermTTL, s.LongTermMinDelay,
 		s.EditorFontSize, s.SidebarWidth, s.DesktopSidebarOpen, s.MarkdownMode, s.ColorOverrides, s.Title, s.OnlyTextExt)
 	return err
@@ -169,12 +175,12 @@ func (d *DB) GetSettings() (Settings, error) {
 	var s Settings
 	err := d.sql.QueryRow(`SELECT
 		TabCloseIcon, WordWrap, CtrlFSearch,
-		LinesPerResult, MaxResultsPerFile, MaxFiles, TrashTTL, ShortTermTTL, ShortTermMinDelay,
+		LinesPerResult, MaxResultsPerFile, MaxFiles, MaxFileSizeKB, TrashTTL, ShortTermTTL, ShortTermMinDelay,
 		MedTermTTL, MedTermMinDelay, LongTermTTL, LongTermMinDelay,
 		EditorFontSize, SidebarWidth, DesktopSidebarOpen, MarkdownMode, ColorOverrides, Title, OnlyTextExt
 		FROM Settings LIMIT 1`).
 		Scan(&s.TabCloseIcon, &s.WordWrap, &s.CtrlFSearch,
-			&s.LinesPerResult, &s.MaxResultsPerFile, &s.MaxFiles, &s.TrashTTL, &s.ShortTermTTL, &s.ShortTermMinDelay,
+			&s.LinesPerResult, &s.MaxResultsPerFile, &s.MaxFiles, &s.MaxFileSizeKB, &s.TrashTTL, &s.ShortTermTTL, &s.ShortTermMinDelay,
 			&s.MedTermTTL, &s.MedTermMinDelay, &s.LongTermTTL, &s.LongTermMinDelay,
 			&s.EditorFontSize, &s.SidebarWidth, &s.DesktopSidebarOpen, &s.MarkdownMode, &s.ColorOverrides, &s.Title, &s.OnlyTextExt)
 	return s, err
@@ -190,11 +196,11 @@ func (d *DB) GetSettings() (Settings, error) {
 func (d *DB) SaveSettings(s Settings) error {
 	_, err := d.sql.Exec(`UPDATE Settings SET
 		TabCloseIcon=?, WordWrap=?, CtrlFSearch=?,
-		LinesPerResult=?, MaxResultsPerFile=?, MaxFiles=?, TrashTTL=?, ShortTermTTL=?, ShortTermMinDelay=?,
+		LinesPerResult=?, MaxResultsPerFile=?, MaxFiles=?, MaxFileSizeKB=?, TrashTTL=?, ShortTermTTL=?, ShortTermMinDelay=?,
 		MedTermTTL=?, MedTermMinDelay=?, LongTermTTL=?, LongTermMinDelay=?,
 		EditorFontSize=?, SidebarWidth=?, DesktopSidebarOpen=?, MarkdownMode=?, ColorOverrides=?, Title=?, OnlyTextExt=?`,
 		s.TabCloseIcon, s.WordWrap, s.CtrlFSearch,
-		s.LinesPerResult, s.MaxResultsPerFile, s.MaxFiles, s.TrashTTL, s.ShortTermTTL, s.ShortTermMinDelay,
+		s.LinesPerResult, s.MaxResultsPerFile, s.MaxFiles, s.MaxFileSizeKB, s.TrashTTL, s.ShortTermTTL, s.ShortTermMinDelay,
 		s.MedTermTTL, s.MedTermMinDelay, s.LongTermTTL, s.LongTermMinDelay,
 		s.EditorFontSize, s.SidebarWidth, s.DesktopSidebarOpen, s.MarkdownMode, s.ColorOverrides, s.Title, s.OnlyTextExt)
 	return err
@@ -278,6 +284,9 @@ func validateSettings(s Settings) error {
 	}
 	if s.MaxFiles < 1 {
 		return fmt.Errorf("maxFiles must be >= 1")
+	}
+	if s.MaxFileSizeKB < 1 {
+		return fmt.Errorf("maxFileSizeKB must be >= 1")
 	}
 	return nil
 }

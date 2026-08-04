@@ -16,6 +16,11 @@
           </section>
 
           <section class="field-row">
+            <label>Max File Size (KB)</label>
+            <input type="text" inputmode="numeric" class="max-file-size-input" v-model="maxFileSizeKBDisplay" />
+          </section>
+
+          <section class="field-row">
             <label>Html Title</label>
             <input type="text" class="title-input" v-model="form.title" />
           </section>
@@ -114,11 +119,24 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { store, closeSettingsModal, showToast } from '../store.js'
 import { saveSettings } from '../api.js'
 
 const form = ref({})
+
+// Displays maxFileSizeKB with thousands separators (e.g. "1,000") while typing, since
+// a plain number input can't show commas — strips everything but digits on write.
+const maxFileSizeKBDisplay = computed({
+  get() {
+    const v = form.value.maxFileSizeKB
+    return v == null ? '' : Number(v).toLocaleString('en-US')
+  },
+  set(val) {
+    const digits = String(val).replace(/\D/g, '')
+    form.value.maxFileSizeKB = digits === '' ? 0 : parseInt(digits, 10)
+  }
+})
 
 // Snapshot the current settings into the editable form each time the modal opens, so
 // unsaved edits never leak into store.settings if the user closes without saving.
@@ -246,6 +264,7 @@ select, input[type="text"], input[type="number"] {
 }
 select:focus, input:focus { border-color: #0078d4; }
 input[type="number"] { width: 70px; }
+.max-file-size-input { width: 90px; }
 .duration-input { width: 90px; }
 .color-overrides-input { width: 220px; }
 .title-input { width: 160px; }

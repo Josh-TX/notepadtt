@@ -391,10 +391,14 @@ async function openFile(file) {
     ? file.path.split('/').slice(0, -1).join('/')
     : ''
   if (folderPath === store.currentFolderPath) {
-    const data = await getFile(file.fileId)
-    store.fileContents[file.fileId] = data.content
-    setFileVersion(file.fileId, data.versionId)
-    setActiveFile(file.fileId)
+    try {
+      const data = await getFile(file.fileId)
+      store.fileContents[file.fileId] = data.content
+      setFileVersion(file.fileId, data.versionId)
+      setActiveFile(file.fileId)
+    } catch (e) {
+      showToast(e.message, 'error')
+    }
   } else {
     store.pendingFileId = file.fileId
     router.push(folderPath ? '/' + folderPath : '/')

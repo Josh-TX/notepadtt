@@ -60,10 +60,14 @@ watch([() => store.activeFileId, tabFiles], async () => {
 })
 
 async function switchTab(fileId) {
-  const data = await getFile(fileId)
-  store.fileContents[fileId] = data.content
-  setFileVersion(fileId, data.versionId)
-  setActiveFile(fileId)
+  try {
+    const data = await getFile(fileId)
+    store.fileContents[fileId] = data.content
+    setFileVersion(fileId, data.versionId)
+    setActiveFile(fileId)
+  } catch (e) {
+    showToast(e.message, 'error')
+  }
 }
 
 function openMenu(e, file) {

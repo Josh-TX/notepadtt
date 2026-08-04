@@ -77,7 +77,7 @@
 <script setup>
 import { ref, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { store, closeSearchModal, setSearchState, setActiveFile, setFileVersion, editorActions, openHistoryModal, openTrashModal } from '../store.js'
+import { store, closeSearchModal, setSearchState, setActiveFile, setFileVersion, editorActions, openHistoryModal, openTrashModal, showToast } from '../store.js'
 import { searchFiles, getFile } from '../api.js'
 import { findMatchRanges, findRegexMatchRanges } from '../textMatch.js'
 
@@ -201,10 +201,14 @@ function escapeHtml(str) {
 async function navigateToFileLocation(fileId, path) {
   const folderPath = path.includes('/') ? path.split('/').slice(0, -1).join('/') : ''
   if (folderPath === store.currentFolderPath) {
-    const data = await getFile(fileId)
-    store.fileContents[fileId] = data.content
-    setFileVersion(fileId, data.versionId)
-    setActiveFile(fileId)
+    try {
+      const data = await getFile(fileId)
+      store.fileContents[fileId] = data.content
+      setFileVersion(fileId, data.versionId)
+      setActiveFile(fileId)
+    } catch (e) {
+      showToast(e.message, 'error')
+    }
   } else {
     store.pendingFileId = fileId
     router.push(folderPath ? '/' + folderPath : '/')

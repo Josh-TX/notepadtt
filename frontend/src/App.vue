@@ -27,7 +27,7 @@
 <script setup>
 import { watch, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { store, setCurrentFolder, setActiveFile, setFileVersion, getFilesInFolder, onTreeUpdate, closeSidebar, dismissToast, openSearchModal } from './store.js'
+import { store, setCurrentFolder, setActiveFile, setFileVersion, getFilesInFolder, onTreeUpdate, closeSidebar, dismissToast, openSearchModal, showToast } from './store.js'
 import { getFiles, getFile } from './api.js'
 import Navbar from './components/Navbar.vue'
 import TabBar from './components/TabBar.vue'
@@ -88,10 +88,15 @@ async function pickActiveFile(folderPath) {
     setActiveFile(null)
     return
   }
-  const data = await getFile(fileId)
-  store.fileContents[fileId] = data.content
-  setFileVersion(fileId, data.versionId)
-  setActiveFile(fileId)
+  try {
+    const data = await getFile(fileId)
+    store.fileContents[fileId] = data.content
+    setFileVersion(fileId, data.versionId)
+    setActiveFile(fileId)
+  } catch (e) {
+    showToast(e.message, 'error')
+    setActiveFile(null)
+  }
 }
 
 onMounted(async () => {

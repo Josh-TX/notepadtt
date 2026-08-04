@@ -97,6 +97,12 @@ func TestValidateSettings_RejectsNonPositiveSearchFields(t *testing.T) {
 	if err := validateSettings(s); err == nil {
 		t.Fatalf("expected error for maxFiles=0, got nil")
 	}
+
+	s = defaultSettings()
+	s.MaxFileSizeKB = 0
+	if err := validateSettings(s); err == nil {
+		t.Fatalf("expected error for maxFileSizeKB=0, got nil")
+	}
 }
 
 func TestSetSettingsCache_UpdatesRetentionVars(t *testing.T) {

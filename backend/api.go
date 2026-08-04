@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/dustin/go-humanize"
 )
 
 func (s *Server) broadcastTree(reason string) {
@@ -35,6 +37,10 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 	f, err := s.db.GetFile(fileId)
 	if err != nil || f == nil {
 		http.NotFound(w, r)
+		return
+	}
+	if info, err := os.Stat(filepath.Join(s.root, filepath.FromSlash(f.Path))); err == nil && !withinMaxFileSize(info.Size()) {
+		http.Error(w, fmt.Sprintf("file exceeds max size of %skb and cannot be opened", humanize.Comma(int64(GetSettingsCache().MaxFileSizeKB))), http.StatusBadRequest)
 		return
 	}
 	s.db.UpdateLastOpened(fileId)

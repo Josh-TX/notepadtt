@@ -50,3 +50,38 @@ func TestStartupScan_DiscoversFileThroughFolderSymlink(t *testing.T) {
 		t.Fatalf("expected content %q, got %q", "hello", f.Content)
 	}
 }
+
+// A file exceeding MaxFileSizeKB should still be tracked (visible in the FileTree) so
+// e.g. a large video dropped into the workspace shows up, but its content should never
+// be read into the DB.
+func TestScan_OversizedFileTrackedButContentNotStored(t *testing.T) {
+	root := t.TempDir()
+	db, err := NewDB(root)
+	if err != nil {
+		t.Fatalf("NewDB: %v", err)
+	}
+
+	settings := defaultSettings()
+	settings.MaxFileSizeKB = 1
+	if err := setSettingsCache(settings); err != nil {
+		t.Fatalf("setSettingsCache: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(root, "big.txt"), make([]byte, 2000), 0644); err != nil {
+		t.Fatalf("write big.txt: %v", err)
+	}
+	if err := db.Scan(); err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+
+	f, err := db.GetFileByPath("big.txt")
+	if err != nil {
+		t.Fatalf("GetFileByPath: %v", err)
+	}
+	if f == nil {
+		t.Fatalf("oversized file should still be tracked")
+	}
+	if f.Content != "" {
+		t.Fatalf("expected empty content for oversized file, got %d bytes", len(f.Content))
+	}
+}

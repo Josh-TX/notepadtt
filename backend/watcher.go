@@ -153,18 +153,15 @@ func (wt *Watcher) syncContent(rel, path string) {
 	if f == nil {
 		return
 	}
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return
-	}
-	if string(content) == f.Content {
+	content := readContentCapped(path)
+	if content == f.Content {
 		return
 	}
 	wt.hub.Versions.Add(f.FileId, f.VersionId, f.Path, f.Content)
 	versionId := uniqueId(5)
-	wt.db.UpdateContentAndVersion(f.FileId, string(content), versionId)
-	wt.hub.Versions.Add(f.FileId, versionId, f.Path, string(content))
-	wt.hub.BroadcastContent(f.FileId, string(content), versionId, "", "watcher: file written on disk")
+	wt.db.UpdateContentAndVersion(f.FileId, content, versionId)
+	wt.hub.Versions.Add(f.FileId, versionId, f.Path, content)
+	wt.hub.BroadcastContent(f.FileId, content, versionId, "", "watcher: file written on disk")
 }
 
 // addTreeWatches adds a watch on dir and recurses into its entries, following

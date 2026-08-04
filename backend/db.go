@@ -130,6 +130,26 @@ func (d *DB) IsTracked(relPath string) bool {
 	return count > 0
 }
 
+// withinMaxFileSize reports whether size (bytes) is within the live MaxFileSizeKB
+// setting (1 KB = 1000 bytes, per the setting's own unit).
+func withinMaxFileSize(size int64) bool {
+	return size <= int64(GetSettingsCache().MaxFileSizeKB)*1000
+}
+
+// readContentCapped reads path's content, unless it exceeds MaxFileSizeKB, in which
+// case it returns "" without reading the file — used everywhere content is synced
+// from disk into the DB, so oversized files (e.g. a video someone drops into a
+// folder) are still tracked (and show up in the FileTree) but their bytes are never
+// loaded into memory or persisted.
+func readContentCapped(path string) string {
+	info, err := os.Stat(path)
+	if err != nil || !withinMaxFileSize(info.Size()) {
+		return ""
+	}
+	content, _ := os.ReadFile(path)
+	return string(content)
+}
+
 // Scan reconciles the DB against disk: tracks new allowed files, updates content that
 // changed on disk while the app wasn't running, trashes DB entries for files removed
 // from disk, and — when onlyTextExt is enabled — purges any tracked/trashed file whose
@@ -180,17 +200,21 @@ func (d *DB) Scan() error {
 		}
 		diskMtime := info.ModTime().UnixMilli()
 
+		content := ""
+		if withinMaxFileSize(info.Size()) {
+			b, _ := os.ReadFile(path)
+			content = string(b)
+		}
+
 		if !inDB {
-			content, _ := os.ReadFile(path)
-			pending = append(pending, pendingInsert{rel, string(content)})
+			pending = append(pending, pendingInsert{rel, content})
 			return nil
 		}
 
 		if diskMtime > rec.contentUpdated {
-			content, _ := os.ReadFile(path)
 			now := time.Now().UnixMilli()
 			d.sql.Exec(`UPDATE files SET Content=?, ContentUpdated=?, VersionId=? WHERE FileId=?`,
-				string(content), now, uniqueId(5), rec.fileId)
+				content, now, uniqueId(5), rec.fileId)
 			log.Printf("startup: updated %s from disk (disk newer)", rel)
 		} else if rec.versionId == "" {
 			d.sql.Exec(`UPDATE files SET VersionId=? WHERE FileId=?`, uniqueId(5), rec.fileId)
@@ -473,10 +497,10 @@ func (d *DB) EnsureFileTracked(relPath string) (string, error) {
 	if f != nil {
 		return f.FileId, nil
 	}
-	content, _ := os.ReadFile(filepath.Join(d.root, filepath.FromSlash(relPath)))
+	content := readContentCapped(filepath.Join(d.root, filepath.FromSlash(relPath)))
 	folder := folderOf(relPath)
 	orderNum := d.GetMaxOrderNumInFolder(folder) + 1
-	return d.insertFileRecord(relPath, string(content), orderNum)
+	return d.insertFileRecord(relPath, content, orderNum)
 }
 
 // NextNewN returns the smallest positive integer N not already used by a "new N" file in folderPath.
