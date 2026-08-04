@@ -107,7 +107,7 @@ onMounted(async () => {
 
 watch(() => store.settings?.title, (title) => {
   if (title != null) document.title = title
-})
+}, { immediate: true })
 
 // global Ctrl+F / Cmd+F: open the Search Modal instead of native browser find,
 // unless the user has set ctrlFSearch to false (defaults to true before settings load)
