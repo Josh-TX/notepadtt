@@ -55,7 +55,8 @@ type DB struct {
 
 func NewDB(root string) (*DB, error) {
 	dbPath := filepath.Join(root, ".notepadtt.db")
-	sqldb, err := sql.Open("sqlite", dbPath)
+	dsn := dbPath + "?_pragma=busy_timeout(5000)"
+	sqldb, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -99,6 +100,23 @@ func NewDB(root string) (*DB, error) {
 		return nil, err
 	}
 	return db, nil
+}
+
+// setWAL switches journal mode between WAL (fast, fsync-free commits, but leaves -wal/-shm
+// files alongside the main db file) and the default DELETE rollback-journal mode (fsyncs
+// every commit, but only ever a single db file on disk between writes).
+func (d *DB) setWAL(enable bool) error {
+	mode, sync := "DELETE", "FULL"
+	if enable {
+		mode, sync = "WAL", "NORMAL"
+	}
+	if _, err := d.sql.Exec(fmt.Sprintf("PRAGMA journal_mode=%s", mode)); err != nil {
+		return err
+	}
+	if _, err := d.sql.Exec(fmt.Sprintf("PRAGMA synchronous=%s", sync)); err != nil {
+		return err
+	}
+	return nil
 }
 
 // IsAllowedPath reports whether relPath should be tracked, honoring the live
@@ -156,6 +174,24 @@ func readContentCapped(path string) string {
 // path now has a disallowed extension (see CleanupNonTextExtension). Runs once at
 // startup; also the basis for a future on-demand "scan" trigger.
 func (d *DB) Scan() error {
+	start := time.Now()
+	walked, updated, trashed, inserted, cleaned := 0, 0, 0, 0, 0
+	// Bulk inserts/deletes below can number in the hundreds; the default rollback-journal
+	// mode fsyncs (twice) per statement, so temporarily switch to WAL (fsync-free commits)
+	// for the duration of the scan, then switch back so the on-disk footprint returns to
+	// a single .notepadtt.db file (switching away from WAL checkpoints and removes the
+	// -wal/-shm files).
+	if err := d.setWAL(true); err != nil {
+		log.Printf("scan: failed to enable WAL: %v", err)
+	}
+	defer func() {
+		if err := d.setWAL(false); err != nil {
+			log.Printf("scan: failed to disable WAL: %v", err)
+		}
+		log.Printf("scan: done in %s (walked=%d updated=%d trashed=%d inserted=%d cleaned=%d)",
+			time.Since(start), walked, updated, trashed, inserted, cleaned)
+	}()
+
 	// load existing DB records
 	rows, err := d.sql.Query(`SELECT FileId, Path, Content, ContentUpdated, VersionId FROM files`)
 	if err != nil {
@@ -194,6 +230,7 @@ func (d *DB) Scan() error {
 		}
 
 		diskPaths[rel] = true
+		walked++
 		info, err := os.Stat(path)
 		if err != nil {
 			return nil
@@ -215,6 +252,7 @@ func (d *DB) Scan() error {
 			now := time.Now().UnixMilli()
 			d.sql.Exec(`UPDATE files SET Content=?, ContentUpdated=?, VersionId=? WHERE FileId=?`,
 				content, now, uniqueId(5), rec.fileId)
+			updated++
 			log.Printf("startup: updated %s from disk (disk newer)", rel)
 		} else if rec.versionId == "" {
 			d.sql.Exec(`UPDATE files SET VersionId=? WHERE FileId=?`, uniqueId(5), rec.fileId)
@@ -230,6 +268,7 @@ func (d *DB) Scan() error {
 	for path, rec := range dbByPath {
 		if !diskPaths[path] {
 			d.TrashFile(rec.fileId, path, rec.content, now)
+			trashed++
 			log.Printf("startup: trashed stale DB entry for %s", path)
 		}
 	}
@@ -247,11 +286,14 @@ func (d *DB) Scan() error {
 		startOrder := d.GetMaxOrderNumInFolder(folder) + 1
 		for i, p := range files {
 			d.insertFileRecord(p.relPath, p.content, startOrder+i)
+			inserted++
 		}
 	}
 
 	if GetSettingsCache().OnlyTextExt {
-		if err := d.CleanupNonTextExtension(""); err != nil {
+		var err error
+		cleaned, err = d.CleanupNonTextExtension("")
+		if err != nil {
 			return err
 		}
 	}
@@ -265,7 +307,7 @@ func (d *DB) Scan() error {
 // only that FileId is checked (used right after a rename); otherwise every FileId
 // referenced by Files or FileTrash is scanned. FileIds with no Files or FileTrash row
 // (orphaned FileVersions only) are left alone.
-func (d *DB) CleanupNonTextExtension(scopeFileId string) error {
+func (d *DB) CleanupNonTextExtension(scopeFileId string) (int, error) {
 	fileIds := map[string]bool{}
 	if scopeFileId != "" {
 		fileIds[scopeFileId] = true
@@ -273,13 +315,13 @@ func (d *DB) CleanupNonTextExtension(scopeFileId string) error {
 		for _, table := range []string{"files", "FileTrash"} {
 			rows, err := d.sql.Query(fmt.Sprintf(`SELECT DISTINCT FileId FROM %s`, table))
 			if err != nil {
-				return err
+				return 0, err
 			}
 			for rows.Next() {
 				var id string
 				if err := rows.Scan(&id); err != nil {
 					rows.Close()
-					return err
+					return 0, err
 				}
 				fileIds[id] = true
 			}
@@ -287,23 +329,25 @@ func (d *DB) CleanupNonTextExtension(scopeFileId string) error {
 		}
 	}
 
+	purged := 0
 	for fileId := range fileIds {
 		path, ok := d.currentOrTrashedPath(fileId)
 		if !ok || isTextExtension(path) {
 			continue
 		}
 		if _, err := d.sql.Exec(`DELETE FROM files WHERE FileId=?`, fileId); err != nil {
-			return err
+			return purged, err
 		}
 		if _, err := d.sql.Exec(`DELETE FROM FileTrash WHERE FileId=?`, fileId); err != nil {
-			return err
+			return purged, err
 		}
 		if _, err := d.sql.Exec(`DELETE FROM FileVersions WHERE FileId=?`, fileId); err != nil {
-			return err
+			return purged, err
 		}
+		purged++
 		log.Printf("cleanup: purged non-text-extension records for %s", path)
 	}
-	return nil
+	return purged, nil
 }
 
 // currentOrTrashedPath returns a FileId's current Files.Path if tracked, else its

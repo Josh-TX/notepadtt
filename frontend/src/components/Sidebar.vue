@@ -112,7 +112,7 @@ function onResizeStart(e) {
 
 function onResizeMove(e) {
   if (!store.sidebarDragging) return
-  const next = preDragWidth + (e.clientX - dragStartX)
+  const next = Math.round(preDragWidth + (e.clientX - dragStartX))
   store.sidebarWidth = Math.min(600, Math.max(100, next))
 }
 
