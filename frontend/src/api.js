@@ -104,6 +104,10 @@ export function saveSettings(settings) {
   return req('PUT', '/api/settings', settings)
 }
 
+export function scanFiles() {
+  return req('POST', '/api/scan')
+}
+
 export function updateWrap(wordWrap) {
   return req('PUT', '/api/settings/wordwrap', { wordWrap })
 }

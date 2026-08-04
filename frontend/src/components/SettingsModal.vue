@@ -111,6 +111,7 @@
           </section>
         </div>
         <div class="settings-footer">
+          <button class="scan-btn" @click="scan" :disabled="scanning">{{ scanning ? 'Scanning…' : 'Scan' }}</button>
           <button class="save-btn" @click="save">Save</button>
         </div>
       </div>
@@ -121,9 +122,10 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { store, closeSettingsModal, showToast } from '../store.js'
-import { saveSettings } from '../api.js'
+import { saveSettings, scanFiles } from '../api.js'
 
 const form = ref({})
+const scanning = ref(false)
 
 // Displays maxFileSizeKB with thousands separators (e.g. "1,000") while typing, since
 // a plain number input can't show commas — strips everything but digits on write.
@@ -158,6 +160,18 @@ function onOverlayMouseDown(e) {
 }
 function onOverlayClick(e) {
   if (mouseDownOnOverlay && e.target === e.currentTarget) close()
+}
+
+async function scan() {
+  scanning.value = true
+  try {
+    await scanFiles()
+    showToast('Scan complete')
+  } catch (e) {
+    showToast('Scan failed', 'error')
+  } finally {
+    scanning.value = false
+  }
 }
 
 async function save() {
@@ -270,7 +284,7 @@ input[type="number"] { width: 70px; }
 .title-input { width: 160px; }
 .settings-footer {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   padding: 10px 12px;
   border-top: 1px solid #2d2d2d;
   flex-shrink: 0;
@@ -285,6 +299,17 @@ input[type="number"] { width: 70px; }
   cursor: pointer;
 }
 .save-btn:hover { background: #1a8ad4; }
+.scan-btn {
+  background: transparent;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #ccc;
+  font-size: 13px;
+  padding: 6px 16px;
+  cursor: pointer;
+}
+.scan-btn:hover { background: #2d2d2d; }
+.scan-btn:disabled { opacity: 0.6; cursor: default; }
 
 @media (max-width: 767px) {
   .settings-overlay {

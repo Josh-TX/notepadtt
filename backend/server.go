@@ -63,6 +63,7 @@ func (s *Server) registerRoutes(frontend embed.FS) {
 	s.mux.HandleFunc("PUT /api/settings/wordwrap", s.handleUpdateWrap)
 	s.mux.HandleFunc("PUT /api/settings/sidebarwidth", s.handleUpdateSidebarWidth)
 	s.mux.HandleFunc("PUT /api/settings/desktopsidebaropen", s.handleUpdateDesktopSidebarOpen)
+	s.mux.HandleFunc("POST /api/scan", s.handleScanFiles)
 
 	// Static frontend
 	sub, _ := fs.Sub(frontend, "frontend/dist")

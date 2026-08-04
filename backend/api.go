@@ -704,18 +704,32 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// Turning onlyTextExt on purges any already-tracked/trashed non-text files (and
-	// their version history) so the invariant "no non-text extension anywhere in the
-	// DB" holds going forward — disk files are untouched.
-	if body.OnlyTextExt && !wasOnlyTextExt {
-		if err := s.db.CleanupNonTextExtension(""); err != nil {
+	// Re-scan on any onlyTextExt flip: turning it on purges already-tracked/trashed
+	// non-text files (and their version history — disk files are untouched); turning
+	// it off newly tracks previously-excluded files already on disk. Scan() itself
+	// re-reads the settings cache and applies the CleanupNonTextExtension pass when
+	// onlyTextExt is on, so a single Scan() covers both directions.
+	if body.OnlyTextExt != wasOnlyTextExt {
+		if err := s.db.Scan(); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		s.broadcastTree("API: onlyTextExt enabled, cleaned up non-text files")
+		s.broadcastTree("API: onlyTextExt changed, re-scanned")
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(settingsResponse(GetSettingsCache()))
+}
+
+// handleScanFiles re-runs the startup filesystem scan on demand — useful when the
+// FileWatcher misses changes (e.g. some symlink setups) or after a tracked-extensions
+// change. Backs the Settings modal's "Scan" button.
+func (s *Server) handleScanFiles(w http.ResponseWriter, r *http.Request) {
+	if err := s.db.Scan(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.broadcastTree("API: manual scan")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleUpdateWrap persists just the WordWrap field, independent of the Settings
