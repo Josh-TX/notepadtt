@@ -83,10 +83,9 @@ func TestScan_OversizedFileExcludedFromTracking(t *testing.T) {
 }
 
 // A previously-tracked file that grows past MaxFileSizeKB (e.g. edited on disk while the
-// app wasn't running) should be untracked on the next scan, same as a file deleted from
-// disk — moved to FileTrash rather than hard-deleted, so it's recoverable if it shrinks
-// back down.
-func TestScan_PreviouslyTrackedFileTrashedWhenGrownOversized(t *testing.T) {
+// app wasn't running) should be purged on the next scan, same as a disallowed extension —
+// not moved to FileTrash, since the exclusion is policy-driven rather than a disk deletion.
+func TestScan_PreviouslyTrackedFilePurgedWhenGrownOversized(t *testing.T) {
 	root := t.TempDir()
 	db, err := NewDB(root)
 	if err != nil {
@@ -126,7 +125,7 @@ func TestScan_PreviouslyTrackedFileTrashedWhenGrownOversized(t *testing.T) {
 	}
 	if _, found, err := db.GetFileTrash(f.FileId); err != nil {
 		t.Fatalf("GetFileTrash: %v", err)
-	} else if !found {
-		t.Fatalf("grown-oversized file should have been moved to FileTrash")
+	} else if found {
+		t.Fatalf("grown-oversized file should be purged, not moved to FileTrash")
 	}
 }

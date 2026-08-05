@@ -156,9 +156,10 @@ func withinMaxFileSize(size int64) bool {
 
 // Scan reconciles the DB against disk: tracks new allowed files within the size limit,
 // updates content that changed on disk while the app wasn't running, trashes DB entries
-// for files removed from disk or that grew past MaxFileSizeKB, and — when onlyTextExt is
-// enabled — purges any tracked/trashed file whose path now has a disallowed extension
-// (see CleanupNonTextExtension). Runs once at startup; also the basis for a future
+// for files removed from disk, purges tracked files that grew past MaxFileSizeKB, and —
+// when onlyTextExt is enabled — purges any tracked/trashed file whose path now has a
+// disallowed extension (see CleanupNonTextExtension). Purged files aren't recoverable via
+// FileTrash, unlike a disk deletion. Runs once at startup; also the basis for a future
 // on-demand "scan" trigger.
 func (d *DB) Scan() error {
 	start := time.Now()
@@ -174,6 +175,15 @@ func (d *DB) Scan() error {
 	defer func() {
 		if err := d.setWAL(false); err != nil {
 			log.Printf("scan: failed to disable WAL: %v", err)
+		}
+		// cleaned only counts purgeFileId calls (disallowed extension / oversized), the
+		// only paths that fully delete rows rather than moving them to FileTrash — the
+		// only cases where freed pages are worth reclaiming via VACUUM (which rewrites
+		// the whole file, so skip it otherwise).
+		if cleaned > 0 {
+			if _, err := d.sql.Exec("VACUUM"); err != nil {
+				log.Printf("scan: vacuum failed: %v", err)
+			}
 		}
 		log.Printf("scan: done in %s (walked=%d updated=%d trashed=%d inserted=%d cleaned=%d)",
 			time.Since(start), walked, updated, trashed, inserted, cleaned)
@@ -227,10 +237,12 @@ func (d *DB) Scan() error {
 			diskPaths[rel] = true
 			if inDB {
 				// was tracked but has grown past MaxFileSizeKB (or the setting was
-				// lowered) since the last scan: untrack it like any other deletion.
-				d.TrashFile(rec.fileId, rel, rec.content, time.Now().UnixMilli())
-				trashed++
-				log.Printf("scan: trashed oversized file %s", rel)
+				// lowered) since the last scan: purge it, same as a disallowed
+				// extension — not recoverable via FileTrash, since the exclusion
+				// rules are policy-driven exclusions rather than a disk deletion.
+				d.purgeFileId(rec.fileId)
+				cleaned++
+				log.Printf("scan: purged oversized file %s", rel)
 			}
 			return nil
 		}
@@ -290,11 +302,11 @@ func (d *DB) Scan() error {
 	}
 
 	if GetSettingsCache().OnlyTextExt {
-		var err error
-		cleaned, err = d.CleanupNonTextExtension("")
+		n, err := d.CleanupNonTextExtension("")
 		if err != nil {
 			return err
 		}
+		cleaned += n
 	}
 
 	return nil
@@ -334,19 +346,31 @@ func (d *DB) CleanupNonTextExtension(scopeFileId string) (int, error) {
 		if !ok || isTextExtension(path) {
 			continue
 		}
-		if _, err := d.sql.Exec(`DELETE FROM files WHERE FileId=?`, fileId); err != nil {
-			return purged, err
-		}
-		if _, err := d.sql.Exec(`DELETE FROM FileTrash WHERE FileId=?`, fileId); err != nil {
-			return purged, err
-		}
-		if _, err := d.sql.Exec(`DELETE FROM FileVersions WHERE FileId=?`, fileId); err != nil {
+		if err := d.purgeFileId(fileId); err != nil {
 			return purged, err
 		}
 		purged++
 		log.Printf("cleanup: purged non-text-extension records for %s", path)
 	}
 	return purged, nil
+}
+
+// purgeFileId hard-deletes every row referencing fileId across Files, FileTrash, and
+// FileVersions. Disk files are never touched. Used for exclusion rules (disallowed
+// extension, oversized) where the file shouldn't be recoverable via FileTrash/HistoryModal
+// once it no longer qualifies for tracking — unlike an ordinary disk deletion, which still
+// goes through TrashFile so it stays recoverable.
+func (d *DB) purgeFileId(fileId string) error {
+	if _, err := d.sql.Exec(`DELETE FROM files WHERE FileId=?`, fileId); err != nil {
+		return err
+	}
+	if _, err := d.sql.Exec(`DELETE FROM FileTrash WHERE FileId=?`, fileId); err != nil {
+		return err
+	}
+	if _, err := d.sql.Exec(`DELETE FROM FileVersions WHERE FileId=?`, fileId); err != nil {
+		return err
+	}
+	return nil
 }
 
 // currentOrTrashedPath returns a FileId's current Files.Path if tracked, else its
