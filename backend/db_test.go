@@ -51,10 +51,9 @@ func TestStartupScan_DiscoversFileThroughFolderSymlink(t *testing.T) {
 	}
 }
 
-// A file exceeding MaxFileSizeKB should still be tracked (visible in the FileTree) so
-// e.g. a large video dropped into the workspace shows up, but its content should never
-// be read into the DB.
-func TestScan_OversizedFileTrackedButContentNotStored(t *testing.T) {
+// A file exceeding MaxFileSizeKB should be excluded from tracking entirely, the same
+// as a disallowed extension: no Files row, so it never shows up in the FileTree.
+func TestScan_OversizedFileExcludedFromTracking(t *testing.T) {
 	root := t.TempDir()
 	db, err := NewDB(root)
 	if err != nil {
@@ -78,10 +77,56 @@ func TestScan_OversizedFileTrackedButContentNotStored(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetFileByPath: %v", err)
 	}
-	if f == nil {
-		t.Fatalf("oversized file should still be tracked")
+	if f != nil {
+		t.Fatalf("oversized file should not be tracked")
 	}
-	if f.Content != "" {
-		t.Fatalf("expected empty content for oversized file, got %d bytes", len(f.Content))
+}
+
+// A previously-tracked file that grows past MaxFileSizeKB (e.g. edited on disk while the
+// app wasn't running) should be untracked on the next scan, same as a file deleted from
+// disk — moved to FileTrash rather than hard-deleted, so it's recoverable if it shrinks
+// back down.
+func TestScan_PreviouslyTrackedFileTrashedWhenGrownOversized(t *testing.T) {
+	root := t.TempDir()
+	db, err := NewDB(root)
+	if err != nil {
+		t.Fatalf("NewDB: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(root, "note.txt"), []byte("small"), 0644); err != nil {
+		t.Fatalf("write note.txt: %v", err)
+	}
+	if err := db.Scan(); err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	f, err := db.GetFileByPath("note.txt")
+	if err != nil {
+		t.Fatalf("GetFileByPath: %v", err)
+	}
+	if f == nil {
+		t.Fatalf("note.txt should be tracked before growing oversized")
+	}
+
+	settings := defaultSettings()
+	settings.MaxFileSizeKB = 1
+	if err := setSettingsCache(settings); err != nil {
+		t.Fatalf("setSettingsCache: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "note.txt"), make([]byte, 2000), 0644); err != nil {
+		t.Fatalf("grow note.txt: %v", err)
+	}
+	if err := db.Scan(); err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+
+	if got, err := db.GetFileByPath("note.txt"); err != nil {
+		t.Fatalf("GetFileByPath: %v", err)
+	} else if got != nil {
+		t.Fatalf("grown-oversized file should no longer be tracked")
+	}
+	if _, found, err := db.GetFileTrash(f.FileId); err != nil {
+		t.Fatalf("GetFileTrash: %v", err)
+	} else if !found {
+		t.Fatalf("grown-oversized file should have been moved to FileTrash")
 	}
 }

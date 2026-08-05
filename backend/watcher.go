@@ -147,13 +147,24 @@ func (wt *Watcher) handle(event fsnotify.Event) {
 // syncContent re-reads path from disk and, if its content differs from what's
 // tracked for rel, records a version and broadcasts the update. Used for both
 // plain Write events and Create events that turn out to be an atomic-save
-// rename landing on an already-tracked path.
+// rename landing on an already-tracked path. If the write grew the file past
+// MaxFileSizeKB, it's untracked entirely instead (like any other deletion).
 func (wt *Watcher) syncContent(rel, path string) {
 	f, _ := wt.db.GetFileByPath(rel)
 	if f == nil {
 		return
 	}
-	content := readContentCapped(path)
+	info, err := os.Stat(path)
+	if err != nil {
+		return
+	}
+	if !withinMaxFileSize(info.Size()) {
+		wt.db.TrashFile(f.FileId, f.Path, f.Content, time.Now().UnixMilli())
+		wt.broadcastTree("watcher: file grew past max size, untracked")
+		return
+	}
+	b, _ := os.ReadFile(path)
+	content := string(b)
 	if content == f.Content {
 		return
 	}

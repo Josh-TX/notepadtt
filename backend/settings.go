@@ -18,7 +18,7 @@ type Settings struct {
 	LinesPerResult    int    `json:"linesPerResult"`
 	MaxResultsPerFile int    `json:"maxResultsPerFile"`
 	MaxFiles          int    `json:"maxFiles"`      // cap on distinct files returned by a search, across all sources combined
-	MaxFileSizeKB     int    `json:"maxFileSizeKB"` // files (on-disk size, 1 KB = 1000 bytes) over this are tracked (visible in FileTree) but their content is never read into the DB, and GET /api/files/{id} 400s instead of serving them
+	MaxFileSizeKB     int    `json:"maxFileSizeKB"` // files (on-disk size, 1 KB = 1000 bytes) over this are excluded entirely: never tracked (absent from the FileTree/DB), same as a disallowed extension
 
 	TrashTTL string `json:"trashTTL"`
 

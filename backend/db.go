@@ -154,25 +154,12 @@ func withinMaxFileSize(size int64) bool {
 	return size <= int64(GetSettingsCache().MaxFileSizeKB)*1000
 }
 
-// readContentCapped reads path's content, unless it exceeds MaxFileSizeKB, in which
-// case it returns "" without reading the file — used everywhere content is synced
-// from disk into the DB, so oversized files (e.g. a video someone drops into a
-// folder) are still tracked (and show up in the FileTree) but their bytes are never
-// loaded into memory or persisted.
-func readContentCapped(path string) string {
-	info, err := os.Stat(path)
-	if err != nil || !withinMaxFileSize(info.Size()) {
-		return ""
-	}
-	content, _ := os.ReadFile(path)
-	return string(content)
-}
-
-// Scan reconciles the DB against disk: tracks new allowed files, updates content that
-// changed on disk while the app wasn't running, trashes DB entries for files removed
-// from disk, and — when onlyTextExt is enabled — purges any tracked/trashed file whose
-// path now has a disallowed extension (see CleanupNonTextExtension). Runs once at
-// startup; also the basis for a future on-demand "scan" trigger.
+// Scan reconciles the DB against disk: tracks new allowed files within the size limit,
+// updates content that changed on disk while the app wasn't running, trashes DB entries
+// for files removed from disk or that grew past MaxFileSizeKB, and — when onlyTextExt is
+// enabled — purges any tracked/trashed file whose path now has a disallowed extension
+// (see CleanupNonTextExtension). Runs once at startup; also the basis for a future
+// on-demand "scan" trigger.
 func (d *DB) Scan() error {
 	start := time.Now()
 	walked, updated, trashed, inserted, cleaned := 0, 0, 0, 0, 0
@@ -229,19 +216,31 @@ func (d *DB) Scan() error {
 			return nil
 		}
 
-		diskPaths[rel] = true
-		walked++
 		info, err := os.Stat(path)
 		if err != nil {
 			return nil
 		}
+
+		if !withinMaxFileSize(info.Size()) {
+			// Mark as seen even though it's excluded, so the "no longer on disk" pass
+			// below doesn't also try (harmlessly, but redundantly) to trash it.
+			diskPaths[rel] = true
+			if inDB {
+				// was tracked but has grown past MaxFileSizeKB (or the setting was
+				// lowered) since the last scan: untrack it like any other deletion.
+				d.TrashFile(rec.fileId, rel, rec.content, time.Now().UnixMilli())
+				trashed++
+				log.Printf("scan: trashed oversized file %s", rel)
+			}
+			return nil
+		}
+
+		diskPaths[rel] = true
+		walked++
 		diskMtime := info.ModTime().UnixMilli()
 
-		content := ""
-		if withinMaxFileSize(info.Size()) {
-			b, _ := os.ReadFile(path)
-			content = string(b)
-		}
+		b, _ := os.ReadFile(path)
+		content := string(b)
 
 		if !inDB {
 			pending = append(pending, pendingInsert{rel, content})
@@ -533,6 +532,10 @@ func (d *DB) GetFilesInFolderRecursive(folderPath string) ([]DBFile, error) {
 	return files, rows.Err()
 }
 
+// EnsureFileTracked tracks relPath if it isn't already, returning its FileId. Oversized
+// files (over MaxFileSizeKB) are left untracked entirely and "" is returned with a nil
+// error, mirroring how disallowed extensions are silently skipped by callers that check
+// IsAllowedPath first.
 func (d *DB) EnsureFileTracked(relPath string) (string, error) {
 	f, err := d.GetFileByPath(relPath)
 	if err != nil {
@@ -541,10 +544,15 @@ func (d *DB) EnsureFileTracked(relPath string) (string, error) {
 	if f != nil {
 		return f.FileId, nil
 	}
-	content := readContentCapped(filepath.Join(d.root, filepath.FromSlash(relPath)))
+	fullPath := filepath.Join(d.root, filepath.FromSlash(relPath))
+	info, err := os.Stat(fullPath)
+	if err != nil || !withinMaxFileSize(info.Size()) {
+		return "", nil
+	}
+	b, _ := os.ReadFile(fullPath)
 	folder := folderOf(relPath)
 	orderNum := d.GetMaxOrderNumInFolder(folder) + 1
-	return d.insertFileRecord(relPath, content, orderNum)
+	return d.insertFileRecord(relPath, string(b), orderNum)
 }
 
 // NextNewN returns the smallest positive integer N not already used by a "new N" file in folderPath.

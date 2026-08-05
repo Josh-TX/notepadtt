@@ -497,9 +497,9 @@ func (s *Server) handleDeleteFolder(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// countUntrackedFilesInFolder reports, for a folder about to be deleted, how
-// many real non-text files would be permanently lost (untracked) and how many
-// symlinks would merely be unlinked. Symlinks are counted separately because
+// countUntrackedFilesInFolder reports, for a folder about to be deleted, how many real
+// untracked files (disallowed extension or over MaxFileSizeKB) would be permanently lost
+// and how many symlinks would merely be unlinked. Symlinks are counted separately because
 // deleting a folder never follows them - os.RemoveAll unlinks a symlink entry
 // without touching whatever it points to - so their target content is never
 // actually at risk, unlike genuine untracked files.
@@ -520,7 +520,7 @@ func (s *Server) countUntrackedFilesInFolder(folderRelPath string) (untracked in
 		if relErr != nil {
 			return nil
 		}
-		if !s.db.IsAllowedPath(filepath.ToSlash(relPath)) {
+		if !s.db.IsAllowedPath(filepath.ToSlash(relPath)) || !withinMaxFileSize(info.Size()) {
 			untracked++
 		}
 		return nil
@@ -696,6 +696,7 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	wasOnlyTextExt := GetSettingsCache().OnlyTextExt
+	wasMaxFileSizeKB := GetSettingsCache().MaxFileSizeKB
 	if err := s.db.SaveSettings(body); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -704,17 +705,17 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// Re-scan on any onlyTextExt flip: turning it on purges already-tracked/trashed
-	// non-text files (and their version history — disk files are untouched); turning
-	// it off newly tracks previously-excluded files already on disk. Scan() itself
-	// re-reads the settings cache and applies the CleanupNonTextExtension pass when
-	// onlyTextExt is on, so a single Scan() covers both directions.
-	if body.OnlyTextExt != wasOnlyTextExt {
+	// Re-scan on any onlyTextExt flip or maxFileSizeKB change: tightening either setting
+	// purges already-tracked files that no longer qualify (extension purge also drops
+	// version history; size purge just untracks, see Scan()); loosening either newly
+	// tracks previously-excluded files already on disk. Scan() itself re-reads the
+	// settings cache and applies both checks, so a single Scan() covers all directions.
+	if body.OnlyTextExt != wasOnlyTextExt || body.MaxFileSizeKB != wasMaxFileSizeKB {
 		if err := s.db.Scan(); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		s.broadcastTree("API: onlyTextExt changed, re-scanned")
+		s.broadcastTree("API: onlyTextExt/maxFileSizeKB changed, re-scanned")
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(settingsResponse(GetSettingsCache()))

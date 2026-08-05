@@ -8,8 +8,9 @@ import (
 	"testing"
 )
 
-// A file whose on-disk size exceeds MaxFileSizeKB should 400 rather than serve its
-// (never-loaded) content, even though it's still tracked and shows up in the FileTree.
+// A tracked file whose on-disk size grows past MaxFileSizeKB without a rescan yet having
+// caught up (e.g. edited directly on disk moments ago) should still 400 rather than serve
+// stale/never-loaded content — a defense-in-depth check alongside the scan/watcher purge.
 func TestHandleGetFile_RejectsOversizedFile(t *testing.T) {
 	s := newTestServer(t)
 	f := createTestFile(t, s, "big.txt", "small for now")
