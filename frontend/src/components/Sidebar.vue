@@ -30,6 +30,7 @@
       @dragover.prevent="onTreeDragOver"
       @drop.prevent="onTreeDrop"
       @dragleave="onTreeDragLeave"
+      @contextmenu="onScrollContextMenu"
     >
       <FileTree
         v-if="store.fileTree"
@@ -404,6 +405,14 @@ async function openFile(file) {
     router.push(folderPath ? '/' + folderPath : '/')
   }
   if (window.innerWidth < 768) closeSidebar()
+}
+
+// Right-click on the blank scroll area (not a tree row) acts as if the root row was
+// right-clicked, since row clicks already handle their own contextmenu via bubbling.
+function onScrollContextMenu(e) {
+  if (e.target.closest('.tree-row') || !store.fileTree) return
+  e.preventDefault()
+  openFolderMenu(e, store.fileTree)
 }
 
 function openFolderMenu(e, folder) {
