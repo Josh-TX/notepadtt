@@ -39,6 +39,9 @@ const state = reactive({
   settingsModalOpen: false,
   moveModalOpen: false,
   moveModalItem: null,  // { type: 'file'|'folder', fileId?, path, name }
+  previewDeleteModalOpen: false,
+  previewDeleteModalFolder: null, // { path, name } the folder pending delete confirmation
+  previewDeleteModalStats: null,  // { trackedCount, trackedSize, untrackedCount, untrackedSize } from GET preview
 })
 
 let ws = null
@@ -245,6 +248,17 @@ export function openMoveModal(item) {
 export function closeMoveModal() {
   state.moveModalOpen = false
   state.moveModalItem = null
+}
+
+export function openPreviewDeleteModal(folder, stats) {
+  state.previewDeleteModalFolder = folder
+  state.previewDeleteModalStats = stats
+  state.previewDeleteModalOpen = true
+}
+export function closePreviewDeleteModal() {
+  state.previewDeleteModalOpen = false
+  state.previewDeleteModalFolder = null
+  state.previewDeleteModalStats = null
 }
 
 export const editorActions = { undo: () => {}, redo: () => {}, scrollToLine: () => {}, highlightTerms: () => {}, getValue: () => '' }

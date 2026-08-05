@@ -22,6 +22,7 @@
   <TrashModal />
   <SettingsModal />
   <MoveFileModal />
+  <PreviewDeleteModal />
 </template>
 
 <script setup>
@@ -39,6 +40,7 @@ import HistoryModal from './components/HistoryModal.vue'
 import TrashModal from './components/TrashModal.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import MoveFileModal from './components/MoveFileModal.vue'
+import PreviewDeleteModal from './components/PreviewDeleteModal.vue'
 
 const route = useRoute()
 

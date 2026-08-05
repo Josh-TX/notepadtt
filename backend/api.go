@@ -458,26 +458,40 @@ func (s *Server) handleMoveFolder(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) handleDeleteFolder(w http.ResponseWriter, r *http.Request) {
+// handlePreviewDeleteFolder reports what deleting a folder would do to disk: how many
+// tracked files (recoverable via trash) and untracked files (permanently lost - disallowed
+// extension or over MaxFileSizeKB) it contains, plus their total content sizes in bytes.
+// Symlinks are excluded - a folder delete only ever unlinks them, their target is untouched.
+func (s *Server) handlePreviewDeleteFolder(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Path string `json:"path"`
 	}
 	json.NewDecoder(r.Body).Decode(&body)
 
-	force := r.URL.Query().Get("force") == "true"
-	if !force {
-		untracked, symlinks, err := s.countUntrackedFilesInFolder(body.Path)
-		if err != nil {
-			http.Error(w, err.Error(), 500)
-			return
-		}
-		if untracked > 0 || symlinks > 0 {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusConflict)
-			json.NewEncoder(w).Encode(map[string]int{"untrackedCount": untracked, "symlinkCount": symlinks})
-			return
-		}
+	trackedCount, trackedSize, err := s.db.GetFolderTrackedStats(body.Path)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
 	}
+	untrackedCount, untrackedSize, err := s.untrackedStatsInFolder(body.Path)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]int64{
+		"trackedCount":   int64(trackedCount),
+		"trackedSize":    trackedSize,
+		"untrackedCount": int64(untrackedCount),
+		"untrackedSize":  untrackedSize,
+	})
+}
+
+func (s *Server) handleDeleteFolder(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Path string `json:"path"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
 
 	files, err := s.db.GetFilesInFolderRecursive(body.Path)
 	if err != nil {
@@ -497,23 +511,17 @@ func (s *Server) handleDeleteFolder(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// countUntrackedFilesInFolder reports, for a folder about to be deleted, how many real
-// untracked files (disallowed extension or over MaxFileSizeKB) would be permanently lost
-// and how many symlinks would merely be unlinked. Symlinks are counted separately because
-// deleting a folder never follows them - os.RemoveAll unlinks a symlink entry
-// without touching whatever it points to - so their target content is never
-// actually at risk, unlike genuine untracked files.
-func (s *Server) countUntrackedFilesInFolder(folderRelPath string) (untracked int, symlinks int, err error) {
+// untrackedStatsInFolder walks a folder on disk and sums the count and total size of
+// files that would be permanently lost (not tracked in the DB) if the folder were
+// deleted. Symlinks are skipped entirely - a folder delete only ever unlinks them
+// without touching whatever they point to, so their target is never actually at risk.
+func (s *Server) untrackedStatsInFolder(folderRelPath string) (count int, size int64, err error) {
 	diskPath := filepath.Join(s.root, filepath.FromSlash(folderRelPath))
 	err = filepath.Walk(diskPath, func(path string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			return nil
 		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			symlinks++
-			return nil
-		}
-		if info.IsDir() {
+		if info.Mode()&os.ModeSymlink != 0 || info.IsDir() {
 			return nil
 		}
 		relPath, relErr := filepath.Rel(s.root, path)
@@ -521,7 +529,8 @@ func (s *Server) countUntrackedFilesInFolder(folderRelPath string) (untracked in
 			return nil
 		}
 		if !s.db.IsAllowedPath(filepath.ToSlash(relPath)) || !withinMaxFileSize(info.Size()) {
-			untracked++
+			count++
+			size += info.Size()
 		}
 		return nil
 	})

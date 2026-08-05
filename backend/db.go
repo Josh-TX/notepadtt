@@ -532,6 +532,19 @@ func (d *DB) GetFilesInFolderRecursive(folderPath string) ([]DBFile, error) {
 	return files, rows.Err()
 }
 
+// GetFolderTrackedStats returns the count and total content size (bytes) of every
+// tracked file at or under folderPath — used to preview what a folder delete would
+// move to trash.
+func (d *DB) GetFolderTrackedStats(folderPath string) (count int, size int64, err error) {
+	var totalSize sql.NullInt64
+	row := d.sql.QueryRow(`SELECT COUNT(*), SUM(LENGTH(Content)) FROM files WHERE Path=? OR Path LIKE ?`,
+		folderPath, folderPath+"/%")
+	if err = row.Scan(&count, &totalSize); err != nil {
+		return 0, 0, err
+	}
+	return count, totalSize.Int64, nil
+}
+
 // EnsureFileTracked tracks relPath if it isn't already, returning its FileId. Oversized
 // files (over MaxFileSizeKB) are left untracked entirely and "" is returned with a nil
 // error, mirroring how disallowed extensions are silently skipped by callers that check

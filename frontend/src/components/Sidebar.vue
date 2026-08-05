@@ -84,8 +84,8 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { store, closeSidebar, setActiveFile, setFileVersion, onTreeUpdate, openSearchModal, openHistoryModal, openTrashModal, openSettingsModal, openMoveModal, showToast, getFolderNode, folderOfPath, willBeTracked } from '../store.js'
-import { createFile, createFolder, deleteFolder, renameFolder, getFile, renameFile, deleteFile, duplicateFile, updateSidebarWidth, updateDesktopSidebarOpen, moveFile, moveFolder } from '../api.js'
+import { store, closeSidebar, setActiveFile, setFileVersion, onTreeUpdate, openSearchModal, openHistoryModal, openTrashModal, openSettingsModal, openMoveModal, openPreviewDeleteModal, showToast, getFolderNode, folderOfPath, willBeTracked } from '../store.js'
+import { createFile, createFolder, deleteFolder, previewDeleteFolder, renameFolder, getFile, renameFile, deleteFile, duplicateFile, updateSidebarWidth, updateDesktopSidebarOpen, moveFile, moveFolder } from '../api.js'
 import { restoreAndOpen } from '../restore.js'
 import FileTree from './FileTree.vue'
 import ContextMenu from './ContextMenu.vue'
@@ -519,28 +519,31 @@ async function doRenameFolder(folder) {
   await renameFolder(folder.path, name)
 }
 
-async function doDeleteFolder(folder) {
-  menuFolder.value = null
-  if (!confirm(`Delete folder "${folder.name}" and all its contents? Text files will be moved to trash.`)) return
-  const result = await deleteFolder(folder.path)
-  if (result?.untrackedCount > 0 || result?.symlinkCount > 0) {
-    const parts = []
-    if (result.untrackedCount > 0) {
-      const n = result.untrackedCount
-      parts.push(`${n} non-text file${n === 1 ? '' : 's'} that cannot be recovered after deletion`)
-    }
-    if (result.symlinkCount > 0) {
-      const n = result.symlinkCount
-      parts.push(`${n} symlink${n === 1 ? '' : 's'} (only the link will be removed; the linked content is untouched)`)
-    }
-    if (!confirm(`This folder contains ${parts.join(' and ')}. Delete anyway?`)) return
-    await deleteFolder(folder.path, true)
-  }
-  // if current folder was inside deleted folder, navigate up
-  if (store.currentFolderPath === folder.path || store.currentFolderPath.startsWith(folder.path + '/')) {
-    const parent = folder.path.includes('/') ? folder.path.split('/').slice(0, -1).join('/') : ''
+function navigateUpIfInside(folderPath) {
+  if (store.currentFolderPath === folderPath || store.currentFolderPath.startsWith(folderPath + '/')) {
+    const parent = folderPath.includes('/') ? folderPath.split('/').slice(0, -1).join('/') : ''
     router.push(parent ? '/' + parent : '/')
   }
+}
+
+// A symlinked folder only ever gets unlinked (its target is untouched), and an empty
+// folder has nothing to lose - both delete immediately with no confirmation. Anything
+// else opens PreviewDeleteModal so the user can see what's tracked (recoverable via
+// trash) vs untracked (permanently lost) before confirming.
+async function doDeleteFolder(folder) {
+  menuFolder.value = null
+  if (folder.isLink) {
+    await deleteFolder(folder.path)
+    navigateUpIfInside(folder.path)
+    return
+  }
+  const stats = await previewDeleteFolder(folder.path)
+  if (stats.trackedCount === 0 && stats.untrackedCount === 0) {
+    await deleteFolder(folder.path)
+    navigateUpIfInside(folder.path)
+    return
+  }
+  openPreviewDeleteModal(folder, stats)
 }
 </script>
 

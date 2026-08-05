@@ -51,6 +51,7 @@ func (s *Server) registerRoutes(frontend embed.FS) {
 	s.mux.HandleFunc("POST /api/folders", s.handleCreateFolder)
 	s.mux.HandleFunc("PUT /api/folders", s.handleRenameFolder)
 	s.mux.HandleFunc("DELETE /api/folders", s.handleDeleteFolder)
+	s.mux.HandleFunc("POST /api/folders/preview-delete", s.handlePreviewDeleteFolder)
 	s.mux.HandleFunc("PUT /api/folders/move", s.handleMoveFolder)
 	s.mux.HandleFunc("GET /api/search", s.handleSearch)
 	s.mux.HandleFunc("GET /api/trash", s.handleListTrash)

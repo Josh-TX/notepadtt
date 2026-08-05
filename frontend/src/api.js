@@ -52,16 +52,12 @@ export function renameFolder(path, name) {
   return req('PUT', '/api/folders', { path, name })
 }
 
-export async function deleteFolder(path, force = false) {
-  const url = force ? '/api/folders?force=true' : '/api/folders'
-  const res = await fetch(url, {
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path })
-  })
-  if (res.status === 409) return res.json()
-  if (!res.ok) throw new Error(await res.text())
-  return null
+export function deleteFolder(path) {
+  return req('DELETE', '/api/folders', { path })
+}
+
+export function previewDeleteFolder(path) {
+  return req('POST', '/api/folders/preview-delete', { path })
 }
 
 export function moveFolder(path, newPath) {
