@@ -27,6 +27,11 @@ var allowedExtensions = map[string]bool{
 
 var newNPattern = regexp.MustCompile(`^new \d+$`)
 
+// dbFileName is the SQLite database file's name, kept directly under root. It (and its
+// WAL sidecar files, e.g. .notepadtt.db-wal/-shm) must never be tracked as a workspace
+// file, regardless of the onlyTextExt setting.
+const dbFileName = ".notepadtt.db"
+
 // textExtensionsList is the sorted allowedExtensions keys, exposed to the frontend via
 // the settings API so it can predict IsAllowedPath's outcome without a round-trip
 // (e.g. to warn before a rename that would untrack a file).
@@ -54,7 +59,7 @@ type DB struct {
 }
 
 func NewDB(root string) (*DB, error) {
-	dbPath := filepath.Join(root, ".notepadtt.db")
+	dbPath := filepath.Join(root, dbFileName)
 	dsn := dbPath + "?_pragma=busy_timeout(5000)"
 	sqldb, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -121,8 +126,12 @@ func (d *DB) setWAL(enable bool) error {
 
 // IsAllowedPath reports whether relPath should be tracked, honoring the live
 // onlyTextExt setting: when false, every path is allowed; when true, only paths
-// matching isTextExtension are.
+// matching isTextExtension are. The db file itself is never allowed, regardless
+// of the setting.
 func (d *DB) IsAllowedPath(relPath string) bool {
+	if strings.HasPrefix(filepath.Base(relPath), dbFileName) {
+		return false
+	}
 	if !GetSettingsCache().OnlyTextExt {
 		return true
 	}

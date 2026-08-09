@@ -61,7 +61,7 @@ func (wt *Watcher) handle(event fsnotify.Event) {
 	rel = filepath.ToSlash(rel)
 	//log.Printf("[watcher] raw event: op=%s path=%q", event.Op, rel)
 
-	if strings.HasPrefix(rel, ".notepadtt.db") {
+	if strings.HasPrefix(rel, dbFileName) {
 		return
 	}
 
