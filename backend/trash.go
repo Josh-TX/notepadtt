@@ -1,131 +1,123 @@
 package backend
 
 import (
-	"database/sql"
-	"strings"
+	"net/http"
+	"os"
+	"path"
+	"path/filepath"
+	"sort"
 	"time"
 )
 
-// FileTrash is a deleted file awaiting restore or permanent purge. Unlike FileVersion,
-// there's no VersionId here — restoring always mints a fresh one via the normal
-// content-write path, the same as any other write.
-type FileTrash struct {
-	FileId      string
-	Path        string
-	Content     string
-	DateDeleted int64
-	Size        int
+type closedTab struct {
+	fileId string
+	path   string
+	index  int
 }
 
-// FileTrashSummary is one row of the Trash Modal's sidebar list: everything about a
-// trashed file except its content, which is fetched separately and on demand.
-type FileTrashSummary struct {
-	FileId      string `json:"fileId"`
-	Path        string `json:"path"`
-	LineCount   int    `json:"lineCount"`
-	Length      int    `json:"length"`
-	DateDeleted int64  `json:"dateDeleted"`
+// trashItem is a deleted file/folder parked in .ntt-trash for trashTTL.
+type trashItem struct {
+	id       string
+	origRel  string
+	trashAbs string // dir holding the moved entry
+	base     string
+	tabs     []closedTab
+	timer    *time.Timer
 }
 
-func createFileTrashSchema(sqldb *sql.DB) error {
-	stmts := []string{
-		`CREATE TABLE IF NOT EXISTS FileTrash (
-			Id INTEGER PRIMARY KEY AUTOINCREMENT,
-			FileId TEXT,
-			Path TEXT,
-			Content TEXT,
-			DateDeleted INTEGER,
-			Size INTEGER
-		)`,
+// handleDelete moves a file or folder to .ntt-trash, closes any tabs under it, and
+// schedules permanent removal after trashTTL. Returns the trash id for restoring.
+func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Path string `json:"path"`
 	}
-	for _, stmt := range stmts {
-		if _, err := sqldb.Exec(stmt); err != nil {
-			return err
+	decodeBody(r, &body)
+	if !validRel(body.Path) {
+		http.Error(w, "invalid path", 400)
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := os.Lstat(s.abs(body.Path)); err != nil {
+		http.Error(w, "not found", 404)
+		return
+	}
+	item := &trashItem{id: uniqueId(12), origRel: body.Path, base: path.Base(body.Path)}
+	item.trashAbs = filepath.Join(s.rootAbs, trashDirName, item.id)
+	if err := os.MkdirAll(item.trashAbs, 0755); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	if err := os.Rename(s.abs(body.Path), filepath.Join(item.trashAbs, item.base)); err != nil {
+		os.RemoveAll(item.trashAbs)
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	for _, f := range s.tabsUnderLocked(body.Path) {
+		idx := s.closeTabLocked(f.id)
+		item.tabs = append(item.tabs, closedTab{fileId: f.id, path: f.path, index: idx})
+	}
+	if len(item.tabs) > 0 {
+		s.broadcastTabsLocked()
+	}
+	s.trash[item.id] = item
+	item.timer = time.AfterFunc(trashTTL, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.trash[item.id] == item {
+			delete(s.trash, item.id)
+			os.RemoveAll(item.trashAbs)
 		}
-	}
-	return nil
+	})
+	s.scheduleTree()
+	writeJSON(w, map[string]string{"trashId": item.id})
 }
 
-// TrashFile deletes a file's files row and, only if this call is the one that actually
-// removed it, inserts a FileTrash row capturing its path/content as of deletion. Every
-// deletion path (single-file, folder, watcher, startup scan) funnels through this, and
-// disk removal (os.Remove/RemoveAll) always races against the watcher's own fsnotify
-// Remove handler reaching the same fileId — the RowsAffected check is what keeps that
-// race from producing a duplicate trash row.
-func (d *DB) TrashFile(fileId, relPath, content string, dateDeleted int64) error {
-	res, err := d.sql.Exec(`DELETE FROM files WHERE FileId=?`, fileId)
-	if err != nil {
-		return err
+// handleRestore moves a trashed entry back and reopens its tabs at their old
+// positions. Fails with 409 if the original path is occupied again.
+func (s *Server) handleRestore(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	item := s.trash[id]
+	if item == nil {
+		http.Error(w, "undo expired", 404)
+		return
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
+	if _, err := os.Lstat(s.abs(item.origRel)); err == nil {
+		http.Error(w, "can't restore: path exists", 409)
+		return
 	}
-	if n == 0 {
-		return nil
+	if err := os.MkdirAll(filepath.Dir(s.abs(item.origRel)), 0755); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
 	}
-	_, err = d.sql.Exec(`INSERT INTO FileTrash (FileId, Path, Content, DateDeleted, Size) VALUES (?,?,?,?,?)`,
-		fileId, relPath, content, dateDeleted, len(content))
-	return err
-}
+	if err := os.Rename(filepath.Join(item.trashAbs, item.base), s.abs(item.origRel)); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	item.timer.Stop()
+	delete(s.trash, id)
+	os.RemoveAll(item.trashAbs)
 
-// GetTrashList returns every trashed file as a summary (no content), most-recently-
-// deleted first.
-func (d *DB) GetTrashList() ([]FileTrashSummary, error) {
-	rows, err := d.sql.Query(`SELECT FileId, Path, Content, DateDeleted, Size FROM FileTrash ORDER BY DateDeleted DESC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []FileTrashSummary{}
-	for rows.Next() {
-		var fileId, path, content string
-		var dateDeleted int64
-		var size int
-		if err := rows.Scan(&fileId, &path, &content, &dateDeleted, &size); err != nil {
-			return nil, err
+	sort.Slice(item.tabs, func(i, j int) bool { return item.tabs[i].index < item.tabs[j].index })
+	restoredId := ""
+	for _, t := range item.tabs {
+		if s.byPath[t.path] != nil {
+			continue
 		}
-		out = append(out, FileTrashSummary{
-			FileId:      fileId,
-			Path:        path,
-			LineCount:   strings.Count(content, "\n") + 1,
-			Length:      size,
-			DateDeleted: dateDeleted,
-		})
+		f := &openFile{id: t.fileId, path: t.path}
+		s.byId[f.id] = f
+		s.byPath[f.path] = f
+		at := min(max(t.index, 0), len(s.tabs))
+		s.tabs = append(s.tabs[:at], append([]string{f.id}, s.tabs[at:]...)...)
+		restoredId = f.id
 	}
-	return out, rows.Err()
-}
-
-// GetFileTrash returns one trashed file's full record (including content), used for
-// restore and for the Trash Modal's on-demand content fetch. found is false if no
-// FileTrash row exists for fileId.
-func (d *DB) GetFileTrash(fileId string) (t FileTrash, found bool, err error) {
-	err = d.sql.QueryRow(`SELECT FileId, Path, Content, DateDeleted, Size FROM FileTrash WHERE FileId=?`, fileId).
-		Scan(&t.FileId, &t.Path, &t.Content, &t.DateDeleted, &t.Size)
-	if err == sql.ErrNoRows {
-		return FileTrash{}, false, nil
+	if len(item.tabs) > 0 {
+		s.broadcastTabsLocked()
 	}
-	if err != nil {
-		return FileTrash{}, false, err
-	}
-	return t, true, nil
-}
-
-// DeleteFileTrash permanently removes one FileTrash row (restore success or the Trash
-// Modal's "Delete Forever" action).
-func (d *DB) DeleteFileTrash(fileId string) error {
-	_, err := d.sql.Exec(`DELETE FROM FileTrash WHERE FileId=?`, fileId)
-	return err
-}
-
-// DeleteAllFileTrash empties the trash (the Trash Modal's "Empty Trash" action).
-func (d *DB) DeleteAllFileTrash() error {
-	_, err := d.sql.Exec(`DELETE FROM FileTrash`)
-	return err
-}
-
-// DeleteExpiredFileTrash hard-deletes trash rows older than TrashTTL.
-func (d *DB) DeleteExpiredFileTrash(now time.Time) error {
-	_, err := d.sql.Exec(`DELETE FROM FileTrash WHERE DateDeleted < ?`, now.UnixMilli()-TrashTTL.Milliseconds())
-	return err
+	s.scheduleTree()
+	writeJSON(w, map[string]string{"path": item.origRel, "fileId": restoredId})
 }

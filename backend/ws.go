@@ -27,12 +27,15 @@ type Hub struct {
 	pendingReasons  []string
 	lastTreeJSON    []byte
 
-	Versions        *RecentVersionStore
-	RecentlyCreated *RecentlyCreatedStore
+	Versions *RecentVersionStore
 
 	// EditHandler processes "edit" messages read off a client's connection.
 	// Set by Server after both it and the Hub exist.
 	EditHandler func(senderCid string, msg EditMessage)
+
+	// OnUnsubscribe is called (without any Hub lock held) with the fileId a
+	// connection was subscribed to when it disconnects.
+	OnUnsubscribe func(fileId string)
 }
 
 type wsClient struct {
@@ -43,10 +46,9 @@ type wsClient struct {
 
 func NewHub() *Hub {
 	return &Hub{
-		clients:         map[string]*wsClient{},
-		subscriptions:   map[string]string{},
-		Versions:        newRecentVersionStore(),
-		RecentlyCreated: newRecentlyCreatedStore(),
+		clients:       map[string]*wsClient{},
+		subscriptions: map[string]string{},
+		Versions:      newRecentVersionStore(),
 	}
 }
 
@@ -74,9 +76,13 @@ func (h *Hub) readPump(c *wsClient) {
 	defer func() {
 		h.mu.Lock()
 		delete(h.clients, c.cid)
+		old := h.subscriptions[c.cid]
 		delete(h.subscriptions, c.cid)
 		h.mu.Unlock()
 		c.conn.Close()
+		if old != "" && h.OnUnsubscribe != nil {
+			h.OnUnsubscribe(old)
+		}
 	}()
 	for {
 		_, raw, err := c.conn.ReadMessage()
@@ -111,10 +117,50 @@ func (c *wsClient) writePump() {
 	}
 }
 
-func (h *Hub) SetSubscription(cid, fileId string) {
+// SetSubscription replaces cid's subscription (an empty fileId clears it) and
+// returns the previous fileId, if any.
+func (h *Hub) SetSubscription(cid, fileId string) string {
 	h.mu.Lock()
-	h.subscriptions[cid] = fileId
-	h.mu.Unlock()
+	defer h.mu.Unlock()
+	if _, ok := h.clients[cid]; !ok {
+		return ""
+	}
+	old := h.subscriptions[cid]
+	if fileId == "" {
+		delete(h.subscriptions, cid)
+	} else {
+		h.subscriptions[cid] = fileId
+	}
+	return old
+}
+
+// HasSubscribers reports whether any connection is subscribed to fileId.
+func (h *Hub) HasSubscribers(fileId string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, f := range h.subscriptions {
+		if f == fileId {
+			return true
+		}
+	}
+	return false
+}
+
+// Broadcast sends msg (a JSON-marshalable value) to every connection.
+func (h *Hub) Broadcast(v any) {
+	msg, err := json.Marshal(v)
+	if err != nil {
+		return
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, c := range h.clients {
+		select {
+		case c.send <- msg:
+		default:
+			log.Printf("ws: send buffer full for cid %s", c.cid)
+		}
+	}
 }
 
 func (h *Hub) BroadcastFS(tree FolderNode, reason string) {
@@ -198,7 +244,7 @@ func (h *Hub) SendEditConflict(cid, fileId, content, versionId string) {
 	h.SendTo(cid, msg)
 }
 
-func (h *Hub) BroadcastContent(fileId, content, versionId, senderCid, reason string) {
+func (h *Hub) BroadcastContent(fileId, content, versionId, senderCid string) {
 	msg, err := json.Marshal(map[string]string{
 		"type":      "content",
 		"fileId":    fileId,

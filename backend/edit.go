@@ -3,7 +3,6 @@ package backend
 import (
 	"log"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -146,111 +145,105 @@ func relocateAndApply(snapshotContent, latestContent string, msg EditMessage) (s
 // client was up to date, otherwise attempts to relocate it against whatever the
 // latest content turned out to be. senderCid is whichever connection sent msg.
 func (s *Server) HandleEdit(senderCid string, msg EditMessage) {
-	f, err := s.db.GetFile(msg.FileId)
-	if err != nil || f == nil {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f := s.byId[msg.FileId]
+	if f == nil || !f.loaded {
 		return
 	}
 
 	// Always snapshot the version about to be superseded so a racing client citing
 	// it as CurrentVersionId can still find something to resolve against.
-	s.hub.Versions.Add(msg.FileId, f.VersionId, f.Path, f.Content)
+	s.hub.Versions.Add(f.id, f.versionId, f.content)
 
-	if msg.CurrentVersionId == f.VersionId {
-		s.applyHappyPathEdit(senderCid, msg, f)
+	if msg.CurrentVersionId == f.versionId {
+		s.applyHappyPathEditLocked(senderCid, msg, f)
 		return
 	}
-	s.applyConflictEdit(senderCid, msg, f)
+	s.applyConflictEditLocked(senderCid, msg, f)
 }
 
-func (s *Server) applyHappyPathEdit(senderCid string, msg EditMessage, f *DBFile) {
-	lines := strings.Split(f.Content, "\n")
+// commitLocked sets f's content/version and writes it straight to disk.
+func (s *Server) commitLocked(f *openFile, content, versionId string) bool {
+	if err := os.WriteFile(s.abs(f.path), []byte(content), 0644); err != nil {
+		log.Printf("[edit] disk write error: %v", err)
+		return false
+	}
+	f.content = content
+	f.versionId = versionId
+	s.hub.Versions.Add(f.id, versionId, content)
+	return true
+}
+
+func (s *Server) applyHappyPathEditLocked(senderCid string, msg EditMessage, f *openFile) {
+	lines := strings.Split(f.content, "\n")
 	newLines, ok := replaceRange(lines, msg.From, msg.To, msg.Text)
 	if !ok {
 		log.Printf("[edit] out-of-range edit fileId=%s from=%+v to=%+v", msg.FileId, msg.From, msg.To)
 		return
 	}
 	newContent := strings.Join(newLines, "\n")
-
-	updated, err := s.db.UpdateContentAndVersionIf(msg.FileId, newContent, msg.NewVersionId, msg.CurrentVersionId)
-	if err != nil {
-		log.Printf("[edit] db error: %v", err)
+	if !s.commitLocked(f, newContent, msg.NewVersionId) {
 		return
 	}
-	if !updated {
-		// Another write raced ahead between our GetFile and this update; re-read and
-		// fall through to conflict handling against the newer content.
-		f2, err := s.db.GetFile(msg.FileId)
-		if err != nil || f2 == nil {
-			return
-		}
-		s.applyConflictEdit(senderCid, msg, f2)
-		return
-	}
-
-	diskPath := filepath.Join(s.root, filepath.FromSlash(f.Path))
-	if err := os.WriteFile(diskPath, []byte(newContent), 0644); err != nil {
-		log.Printf("[edit] disk write error: %v", err)
-		return
-	}
-	s.hub.Versions.Add(msg.FileId, msg.NewVersionId, f.Path, newContent)
-	s.hub.BroadcastContent(msg.FileId, newContent, msg.NewVersionId, senderCid, "WS: client edit")
+	s.hub.BroadcastContent(f.id, newContent, msg.NewVersionId, senderCid)
 }
 
-func (s *Server) applyConflictEdit(senderCid string, msg EditMessage, latest *DBFile) {
+func (s *Server) applyConflictEditLocked(senderCid string, msg EditMessage, f *openFile) {
 	snapshot, found := s.hub.Versions.Lookup(msg.FileId, msg.CurrentVersionId)
 	if !found {
-		s.hub.SendEditConflict(senderCid, msg.FileId, latest.Content, latest.VersionId)
+		s.hub.SendEditConflict(senderCid, f.id, f.content, f.versionId)
 		return
 	}
 
 	snapshotLines := strings.Split(snapshot, "\n")
 	removedActual, ok := extractRange(snapshotLines, msg.From, msg.To)
 	if !ok || !slices.Equal(removedActual, msg.Removed) {
-		s.hub.SendEditConflict(senderCid, msg.FileId, latest.Content, latest.VersionId)
+		s.hub.SendEditConflict(senderCid, f.id, f.content, f.versionId)
 		return
 	}
 
 	naiveLines, ok := replaceRange(snapshotLines, msg.From, msg.To, msg.Text)
 	if !ok {
-		s.hub.SendEditConflict(senderCid, msg.FileId, latest.Content, latest.VersionId)
+		s.hub.SendEditConflict(senderCid, f.id, f.content, f.versionId)
 		return
 	}
 	naiveContent := strings.Join(naiveLines, "\n")
 
-	for {
-		merged, ok := relocateAndApply(snapshot, latest.Content, msg)
-		if !ok {
-			s.hub.SendEditConflict(senderCid, msg.FileId, latest.Content, latest.VersionId)
-			return
-		}
-
-		freshVersionId := uniqueId(5)
-		updated, err := s.db.UpdateContentAndVersionIf(msg.FileId, merged, freshVersionId, latest.VersionId)
-		if err != nil {
-			log.Printf("[edit] db error: %v", err)
-			return
-		}
-		if !updated {
-			// Yet another write raced in; re-read and retry relocation against it.
-			f2, err := s.db.GetFile(msg.FileId)
-			if err != nil || f2 == nil {
-				return
-			}
-			latest = f2
-			continue
-		}
-
-		diskPath := filepath.Join(s.root, filepath.FromSlash(latest.Path))
-		if err := os.WriteFile(diskPath, []byte(merged), 0644); err != nil {
-			log.Printf("[edit] disk write error: %v", err)
-			return
-		}
-		s.hub.Versions.Add(msg.FileId, freshVersionId, latest.Path, merged)
-		// Also cache the sender's naive (non-merged) result under its own NewVersionId,
-		// since that's what the client's local editor actually contains and its next
-		// chained edit will cite this as CurrentVersionId.
-		s.hub.Versions.Add(msg.FileId, msg.NewVersionId, latest.Path, naiveContent)
-		s.hub.BroadcastContent(msg.FileId, merged, freshVersionId, "", "WS: edit conflict resolved")
+	merged, ok := relocateAndApply(snapshot, f.content, msg)
+	if !ok {
+		s.hub.SendEditConflict(senderCid, f.id, f.content, f.versionId)
 		return
 	}
+
+	freshVersionId := uniqueId(5)
+	if !s.commitLocked(f, merged, freshVersionId) {
+		return
+	}
+	// Also cache the sender's naive (non-merged) result under its own NewVersionId,
+	// since that's what the client's local editor actually contains and its next
+	// chained edit will cite this as CurrentVersionId.
+	s.hub.Versions.Add(f.id, msg.NewVersionId, naiveContent)
+	s.hub.BroadcastContent(f.id, merged, freshVersionId, "")
+}
+
+// syncFromDiskLocked folds an external change to f's file into the same
+// versioned stream as a client edit, then broadcasts it to all subscribers.
+func (s *Server) syncFromDiskLocked(f *openFile) {
+	if !f.loaded {
+		return
+	}
+	b, err := os.ReadFile(s.abs(f.path))
+	if err != nil {
+		return
+	}
+	content := string(b)
+	if content == f.content {
+		return // our own write echoing back, or a no-op touch
+	}
+	s.hub.Versions.Add(f.id, f.versionId, f.content)
+	f.content = content
+	f.versionId = uniqueId(5)
+	s.hub.Versions.Add(f.id, f.versionId, content)
+	s.hub.BroadcastContent(f.id, content, f.versionId, "")
 }

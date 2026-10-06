@@ -6,6 +6,11 @@ import (
 	"path/filepath"
 )
 
+// excludedNames are treated as nonexistent everywhere: tree, watcher, and search.
+var excludedNames = map[string]bool{".git": true, "node_modules": true, trashDirName: true}
+
+func isExcludedName(name string) bool { return excludedNames[name] }
+
 // walkFollowSymlinks recursively visits root and its descendants like
 // filepath.WalkDir, but also descends into directory symlinks (filepath.WalkDir
 // treats symlinks as opaque leaf entries and never follows them). Resolved
@@ -45,6 +50,9 @@ func walkFollowSymlinks(root string, onDir func(path string) error, onFile func(
 			return nil
 		}
 		for _, e := range entries {
+			if isExcludedName(e.Name()) {
+				continue
+			}
 			childPath := filepath.Join(dir, e.Name())
 			isDir := e.IsDir()
 			if !isDir && e.Type()&os.ModeSymlink != 0 {

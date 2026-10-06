@@ -1,7 +1,6 @@
 package backend
 
 import (
-	"sort"
 	"sync"
 	"time"
 )
@@ -9,30 +8,31 @@ import (
 type recentVersion struct {
 	fileId    string
 	versionId string
-	path      string
 	content   string
 	addedAt   time.Time
 }
 
 // RecentVersionStore holds recent content snapshots keyed by (fileId, versionId).
-// Used to retrieve the "old" content a client was working from during 3-way merge,
-// and read by the FileVersioning process (retention.go) as the source of every
-// FileVersions row it persists. Entries expire after 5 seconds; purged as the final
-// step of that process's once-a-minute run rather than by a standalone ticker.
+// Used to retrieve the "old" content a client was working from during conflict
+// resolution. Entries expire after 5 seconds; a ticker purges them.
 type RecentVersionStore struct {
 	mu      sync.Mutex
 	entries []recentVersion
 }
 
 func newRecentVersionStore() *RecentVersionStore {
-	return &RecentVersionStore{}
+	s := &RecentVersionStore{}
+	go func() {
+		for range time.Tick(time.Second) {
+			s.cleanup()
+		}
+	}()
+	return s
 }
 
-// Add records a content snapshot. path is the file's path at the time of this
-// snapshot, needed because FileVersions rows persisted from this entry require one.
-func (s *RecentVersionStore) Add(fileId, versionId, path, content string) {
+func (s *RecentVersionStore) Add(fileId, versionId, content string) {
 	s.mu.Lock()
-	s.entries = append(s.entries, recentVersion{fileId, versionId, path, content, time.Now()})
+	s.entries = append(s.entries, recentVersion{fileId, versionId, content, time.Now()})
 	s.mu.Unlock()
 }
 
@@ -49,34 +49,20 @@ func (s *RecentVersionStore) Lookup(fileId, versionId string) (string, bool) {
 	return "", false
 }
 
-// Entries returns a snapshot copy of all current entries, regardless of age, for the
-// FileVersioning process to evaluate as FileVersions candidates.
-func (s *RecentVersionStore) Entries() []recentVersion {
+// Forget drops all entries for a file (used when its tab closes).
+func (s *RecentVersionStore) Forget(fileId string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]recentVersion, len(s.entries))
-	copy(out, s.entries)
-	return out
-}
-
-// EntriesForFile returns a snapshot of one FileId's entries, oldest first, regardless
-// of age — the shape assignTermsForFile expects, for both the FileVersioning process
-// and the on-demand GET /api/files/{id}/versions handler to evaluate as candidates.
-func (s *RecentVersionStore) EntriesForFile(fileId string) []recentVersion {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var out []recentVersion
+	n := 0
 	for _, e := range s.entries {
-		if e.fileId == fileId {
-			out = append(out, e)
+		if e.fileId != fileId {
+			s.entries[n] = e
+			n++
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].addedAt.Before(out[j].addedAt) })
-	return out
+	s.entries = s.entries[:n]
 }
 
-// cleanup purges entries older than 5 seconds. Called as the final step of the
-// FileVersioning process (retention.go) rather than its own ticker.
 func (s *RecentVersionStore) cleanup() {
 	cutoff := time.Now().Add(-5 * time.Second)
 	s.mu.Lock()
