@@ -21,12 +21,10 @@ var frontendDist embed.FS
 func main() {
 	var dir string
 	var port int
-	var host string
 	flag.StringVar(&dir, "directory", ".", "root directory to serve")
 	flag.StringVar(&dir, "d", ".", "root directory to serve")
 	flag.IntVar(&port, "port", 8080, "port to listen on")
 	flag.IntVar(&port, "p", 8080, "port to listen on")
-	flag.StringVar(&host, "host", "", "address to listen on (default all interfaces)")
 	flag.Parse()
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		log.Fatalf("directory %q does not exist or is not a directory", dir)
@@ -36,7 +34,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	addr := fmt.Sprintf("%s:%d", host, port)
+	addr := fmt.Sprintf(":%d", port)
 	log.Printf("listening on %s, serving %s", addr, dir)
 	httpSrv := &http.Server{Addr: addr, Handler: srv, ReadHeaderTimeout: 10 * time.Second}
 
