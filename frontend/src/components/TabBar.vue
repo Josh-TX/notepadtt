@@ -1,5 +1,12 @@
 <template>
   <div class="tabbar">
+    <button v-show="!(store.isPushLayout && store.sidebarOpen)" class="bar-btn" title="Toggle sidebar" @click="toggleSidebar">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+        <rect x="1" y="3" width="14" height="1.5" rx="0.5"/>
+        <rect x="1" y="7" width="14" height="1.5" rx="0.5"/>
+        <rect x="1" y="11" width="14" height="1.5" rx="0.5"/>
+      </svg>
+    </button>
     <div
       class="tabs-scroll"
       ref="scrollEl"
@@ -7,152 +14,109 @@
       @drop.prevent="onDrop"
       @dragleave="onContainerDragLeave"
     >
-      <template v-if="tabFiles.length">
-        <div
-          v-for="file in tabFiles"
-          :key="file.fileId"
-          class="tab"
-          :class="{ active: file.fileId === store.activeFileId, dragging: isDragging && file.fileId === dragFileId, 'menu-open': menuFile && file.fileId === menuFile.fileId }"
-          :draggable="!isTouchDevice"
-          @click="switchTab(file.fileId)"
-          @contextmenu.prevent="openMenu($event, file)"
-          @dragstart="onDragStart($event, file)"
-          @dragend="onDragEnd"
-        >
-          <span class="tab-name">{{ file.name }}</span>
-          <button v-if="showCloseIcon(file)" class="tab-close" title="Close" @click.stop="doClose(file)">✕</button>
-        </div>
-        <div v-if="isDragging && dropIndex !== null" class="drop-indicator" :style="indicatorStyle" />
-      </template>
-      <div v-else class="blank-hint">no text files in this folder</div>
+      <div
+        v-for="tab in store.tabs"
+        :key="tab.fileId"
+        class="tab"
+        :class="{ active: tab.fileId === store.activeFileId, dragging: isDragging && tab.fileId === dragFileId, 'menu-open': menuTab && tab.fileId === menuTab.fileId }"
+        :title="tab.absPath"
+        :draggable="!isTouchDevice"
+        @click="activateTab(tab.fileId)"
+        @contextmenu.prevent="openMenu($event, tab)"
+        @dragstart="onDragStart($event, tab)"
+        @dragend="onDragEnd"
+      >
+        <span class="tab-name">{{ tab.name }}</span>
+        <button class="tab-close" title="Close" @click.stop="closeTabById(tab.fileId)">✕</button>
+      </div>
+      <div v-if="isDragging && dropIndex !== null" class="drop-indicator" :style="indicatorStyle" />
     </div>
+    <button class="bar-btn new-btn" title="New file" @click="newFile">+</button>
+    <div class="bar-spacer" />
+    <button class="bar-btn" title="Search files (Ctrl+Shift+F)" @click="openSearchModal">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="6.5" cy="6.5" r="4"/>
+        <line x1="10" y1="10" x2="14" y2="14"/>
+      </svg>
+    </button>
 
     <ContextMenu
-      v-if="menuFile"
+      v-if="menuTab"
       :x="menuX"
       :y="menuY"
       :items="menuItems"
-      @close="menuFile = null"
+      @close="menuTab = null"
     />
   </div>
 </template>
 
 <script setup>
 import { computed, ref, watch, nextTick, onMounted } from 'vue'
-import { store, setActiveFile, setFileVersion, getFilesInFolder, openHistoryModal, openMoveModal, showToast, willBeTracked } from '../store.js'
-import { getFile, renameFile, deleteFile, duplicateFile, reorderFile } from '../api.js'
-import { restoreAndOpen } from '../restore.js'
+import { store, activateTab, activateNewTab, closeTabById, reorderTab, toggleSidebar, openSearchModal, openMoveModal, deleteWithUndo, showToast } from '../store.js'
+import { createFile, rename, duplicate, downloadUrl } from '../api.js'
 import ContextMenu from './ContextMenu.vue'
 
 const scrollEl = ref(null)
 const isTouchDevice = ref(false)
 onMounted(() => { isTouchDevice.value = window.matchMedia('(pointer: coarse)').matches })
-const menuFile = ref(null)
+const menuTab = ref(null)
 const menuX = ref(0)
 const menuY = ref(0)
 
-const tabFiles = computed(() => getFilesInFolder(store.currentFolderPath))
-
-watch([() => store.activeFileId, tabFiles], async () => {
+watch([() => store.activeFileId, () => store.tabs], async () => {
   await nextTick()
   const el = scrollEl.value?.querySelector('.tab.active')
   el?.scrollIntoView({ inline: 'nearest', behavior: 'instant' })
 })
 
-async function switchTab(fileId) {
+async function newFile() {
   try {
-    const data = await getFile(fileId)
-    store.fileContents[fileId] = data.content
-    setFileVersion(fileId, data.versionId)
-    setActiveFile(fileId)
+    await activateNewTab(await createFile(''))
   } catch (e) {
     showToast(e.message, 'error')
   }
 }
 
-function openMenu(e, file) {
-  menuFile.value = file
+function openMenu(e, tab) {
+  menuTab.value = tab
   menuX.value = e.clientX
   menuY.value = e.clientY
 }
 
 const menuItems = computed(() => {
-  const file = menuFile.value
+  const tab = menuTab.value
   return [
-    { label: 'Rename', action: () => doRename(file) },
-    { label: 'Move', action: () => doMove(file) },
-    { label: 'Delete', action: () => doDelete(file) },
-    { label: 'Duplicate', action: () => doDuplicate(file) },
-    { label: 'Download', action: () => doDownload(file) },
-    { label: 'History', action: () => doHistory(file) },
+    { label: 'Rename', action: () => doRename(tab) },
+    { label: 'Move', action: () => openMoveModal({ type: 'file', path: tab.path, name: tab.name }) },
+    { label: 'Delete', action: () => deleteWithUndo(tab.path, tab.name) },
+    { label: 'Duplicate', action: () => doDuplicate(tab) },
+    { label: 'Download', action: () => doDownload(tab) },
   ]
 })
 
-function doHistory(file) {
-  menuFile.value = null
-  openHistoryModal(file)
-}
-
-function doMove(file) {
-  menuFile.value = null
-  openMoveModal({ type: 'file', fileId: file.fileId, path: file.path, name: file.name })
-}
-
-async function doRename(file) {
-  menuFile.value = null
-  const newName = window.prompt('Rename file:', file.name)
-  if (!newName || newName === file.name) return
-  if (!willBeTracked(newName)) {
-    if (!confirm(`"${newName}" doesn't have a common text file extension, so it won't be tracked (no history, search, or version recovery). Enable "All Files" under Settings if you want it tracked.`)) return
+async function doRename(tab) {
+  const newName = window.prompt('Rename file:', tab.name)
+  if (!newName || newName === tab.name) return
+  try {
+    await rename(tab.path, newName)
+  } catch (e) {
+    showToast(e.message, 'error')
   }
-  await renameFile(file.fileId, newName)
 }
 
-function getNextTabAfterDelete(file) {
-  if (file.fileId !== store.activeFileId) return null
-  const files = tabFiles.value
-  const idx = files.findIndex(f => f.fileId === file.fileId)
-  if (idx === -1 || files.length <= 1) return null
-  return files[idx < files.length - 1 ? idx + 1 : idx - 1]
+async function doDuplicate(tab) {
+  try {
+    await activateNewTab(await duplicate(tab.path))
+  } catch (e) {
+    showToast(e.message, 'error')
+  }
 }
 
-async function doDelete(file) {
-  menuFile.value = null
-  const next = getNextTabAfterDelete(file)
-  await deleteFile(file.fileId)
-  showToast(`Deleted "${file.name}"`, null, { label: 'UNDO', handler: () => restoreAndOpen(file.fileId) })
-  if (next) await switchTab(next.fileId)
-}
-
-function showCloseIcon(file) {
-  const mode = store.settings?.tabCloseIcon
-  if (mode === 'visible') return true
-  if (mode === 'new') return file.name.startsWith('new ')
-  return false
-}
-
-async function doClose(file) {
-  const next = getNextTabAfterDelete(file)
-  await deleteFile(file.fileId)
-  showToast(`Deleted "${file.name}"`, null, { label: 'UNDO', handler: () => restoreAndOpen(file.fileId) })
-  if (next) await switchTab(next.fileId)
-}
-
-async function doDuplicate(file) {
-  menuFile.value = null
-  await duplicateFile(file.fileId)
-}
-
-function doDownload(file) {
-  menuFile.value = null
-  const content = store.fileContents[file.fileId] ?? ''
-  const blob = new Blob([content], { type: 'text/plain' })
-  const url = URL.createObjectURL(blob)
+function doDownload(tab) {
   const a = document.createElement('a')
-  a.href = url
-  a.download = file.name
+  a.href = downloadUrl(tab.path)
+  a.download = tab.name
   a.click()
-  URL.revokeObjectURL(url)
 }
 
 // --- Drag-to-reorder (desktop only via HTML5 drag-and-drop) ---
@@ -231,9 +195,9 @@ async function onDrop() {
   // Convert UI drop position to final position in the resulting array.
   // dropIndex is 0..N in the current array (with the dragged file present).
   // After removing the dragged file, the target index shifts if we drop after its current position.
-  const currentIndex = tabFiles.value.findIndex(f => f.fileId === fid)
+  const currentIndex = store.tabs.findIndex(f => f.fileId === fid)
   const targetIndex = rawDrop > currentIndex ? rawDrop - 1 : rawDrop
-  await reorderFile(fid, targetIndex)
+  await reorderTab(fid, targetIndex)
 }
 
 function autoScroll(clientX) {
@@ -278,7 +242,7 @@ function stopAutoScroll() {
   flex-shrink: 0;
 }
 .tabs-scroll {
-  flex: 1;
+  flex: 0 1 auto;
   position: relative;
   display: flex;
   align-items: stretch;
@@ -340,12 +304,17 @@ function stopAutoScroll() {
   background: #aaa;
   pointer-events: none;
 }
-.blank-hint {
-  flex: 1;
+.bar-btn {
+  flex-shrink: 0;
+  background: #181818;
+  border: none;
+  color: #aaa;
+  cursor: pointer;
+  padding: 0 10px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  color: #555;
-  font-style: italic;
 }
+.bar-btn:hover { color: #fff; background: #2a2d2e; }
+.new-btn { font-size: 20px; }
+.bar-spacer { flex: 1; }
 </style>

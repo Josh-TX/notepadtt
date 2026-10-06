@@ -22,14 +22,6 @@
           </div>
           <button class="close-btn" @click="close">✕</button>
         </div>
-        <div class="search-filters">
-          <label class="filter-checkbox">
-            <input type="checkbox" v-model="store.searchIncludeHistory" @change="onFilterChange" /> History
-          </label>
-          <label class="filter-checkbox">
-            <input type="checkbox" v-model="store.searchIncludeTrash" @change="onFilterChange" /> Trash
-          </label>
-        </div>
         <div v-if="regexError" class="search-error">{{ regexError }}</div>
         <div class="search-body">
           <div v-if="!query" class="search-placeholder">Type to search…</div>
@@ -38,17 +30,8 @@
           </div>
           <div v-else-if="results.length === 0" class="search-placeholder">No results</div>
           <div v-else class="search-results">
-            <div v-for="result in results" :key="result.fileId" class="search-result-group">
-              <div class="result-path">
-                <svg v-if="result.source === 'history'" class="source-icon" width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="8" cy="8" r="6.5"/>
-                  <path d="M8 4.5V8l3 2"/>
-                </svg>
-                <svg v-else-if="result.source === 'trash'" class="source-icon" width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="2,4 14,4"/>
-                  <path d="M3,4 L4,14 L12,14 L13,4"/>
-                  <path d="M6,4 V2 H10 V4"/>
-                </svg>
+            <div v-for="result in results" :key="result.path" class="search-result-group">
+              <div class="result-path" @click="openResult(result, null)">
                 <span>{{ result.path }}</span>
               </div>
               <div
@@ -76,12 +59,10 @@
 
 <script setup>
 import { ref, watch, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
-import { store, closeSearchModal, setSearchState, setActiveFile, setFileVersion, editorActions, openHistoryModal, openTrashModal, showToast } from '../store.js'
-import { searchFiles, getFile } from '../api.js'
+import { store, closeSearchModal, setSearchState, openPath, editorActions, activeTab } from '../store.js'
+import { searchFiles } from '../api.js'
 import { findMatchRanges, findRegexMatchRanges } from '../textMatch.js'
 
-const router = useRouter()
 const inputRef = ref(null)
 const query = ref('')
 const results = ref([])
@@ -123,7 +104,7 @@ function onInput() {
   debounceTimer = setTimeout(runSearch, 400)
 }
 
-// Toggling History/Trash/Regex re-runs the current query immediately rather than
+// Toggling Regex re-runs the current query immediately rather than
 // waiting for the input debounce — there's no text being typed to debounce against.
 function onFilterChange() {
   clearTimeout(debounceTimer)
@@ -137,7 +118,7 @@ async function runSearch() {
   if (!q.trim()) { loading.value = false; searching.value = false; return }
   searching.value = true
   try {
-    const data = await searchFiles(q, { history: store.searchIncludeHistory, trash: store.searchIncludeTrash, regex: store.searchIncludeRegex })
+    const data = await searchFiles(q, { regex: store.searchIncludeRegex })
     results.value = data
     regexError.value = ''
     setSearchState(q, data)
@@ -195,52 +176,23 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;')
 }
 
-// Shared by the "file" branch below and by History results whose file still exists
-// live — navigates CurrentFolder/breadcrumbs and opens the file's tab, same mechanics
-// either way.
-async function navigateToFileLocation(fileId, path) {
-  const folderPath = path.includes('/') ? path.split('/').slice(0, -1).join('/') : ''
-  if (folderPath === store.currentFolderPath) {
-    try {
-      const data = await getFile(fileId)
-      store.fileContents[fileId] = data.content
-      setFileVersion(fileId, data.versionId)
-      setActiveFile(fileId)
-    } catch (e) {
-      showToast(e.message, 'error')
-    }
-  } else {
-    store.pendingFileId = fileId
-    router.push(folderPath ? '/' + folderPath : '/')
-  }
-}
-
+// Opens the result's file (or just scrolls, if it's already the active tab) and jumps to
+// the clicked snippet. section is null when the filename row itself was clicked.
 async function openResult(result, section) {
   close()
   const terms = searchTerms()
-
-  if (result.source === 'trash') {
-    openTrashModal({ fileId: result.fileId, scrollLine: section.startLineNumber, highlightTerms: terms })
+  if (activeTab()?.path === result.path) {
+    if (section) {
+      editorActions.scrollToLine(section.startLineNumber)
+      editorActions.highlightTerms(terms)
+    }
     return
   }
-
-  if (result.source === 'history') {
-    if (result.exists) await navigateToFileLocation(result.fileId, result.path)
-    openHistoryModal(
-      { fileId: result.fileId, name: result.path.split('/').pop(), path: result.path },
-      { versionId: result.versionId, scrollLine: section.startLineNumber, highlightTerms: terms },
-    )
-    return
+  if (section) {
+    store.pendingScrollLine = section.startLineNumber
+    store.pendingHighlightTerms = terms
   }
-
-  if (store.activeFileId === result.fileId) {
-    editorActions.scrollToLine(section.startLineNumber)
-    editorActions.highlightTerms(terms)
-    return
-  }
-  store.pendingScrollLine = section.startLineNumber
-  store.pendingHighlightTerms = terms
-  await navigateToFileLocation(result.fileId, result.path)
+  await openPath(result.path)
 }
 </script>
 
@@ -320,28 +272,12 @@ async function openResult(result, section) {
   line-height: 1;
 }
 .close-btn:hover { color: #fff; background: #3a3a3a; }
-.search-filters {
-  display: flex;
-  gap: 16px;
-  padding: 6px 12px;
-  border-bottom: 1px solid #2d2d2d;
-  flex-shrink: 0;
-}
 .search-error {
   padding: 6px 12px;
   border-bottom: 1px solid #2d2d2d;
   color: #f48771;
   font-size: 12px;
   flex-shrink: 0;
-}
-.filter-checkbox {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  color: #ccc;
-  font-size: 12px;
-  cursor: pointer;
-  user-select: none;
 }
 .search-body {
   flex: 1;
@@ -391,8 +327,9 @@ async function openResult(result, section) {
   color: #9cdcfe;
   margin-bottom: 4px;
   word-break: break-all;
+  cursor: pointer;
 }
-.source-icon { flex-shrink: 0; color: #999; }
+.result-path:hover { text-decoration: underline; }
 .result-snippet {
   background: #1f1f1f;
   border: 1px solid #2d2d2d;

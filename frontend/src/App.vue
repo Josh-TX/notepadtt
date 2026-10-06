@@ -6,10 +6,9 @@
     <div v-if="store.sidebarOpen" class="sidebar-overlay" @click="closeSidebar" />
   </Transition>
   <div class="main-layout" :class="{ 'sidebar-open': store.sidebarOpen }" :style="mainLayoutStyle">
-    <Navbar />
     <TabBar />
     <Editor />
-    <Footer />
+    <Footer v-if="store.activeFileId" />
   </div>
   <Transition name="toast">
     <div v-if="store.toast" class="toast" :class="store.toastType">
@@ -18,31 +17,18 @@
     </div>
   </Transition>
   <SearchModal />
-  <HistoryModal />
-  <TrashModal />
-  <SettingsModal />
   <MoveFileModal />
-  <PreviewDeleteModal />
 </template>
 
 <script setup>
-import { watch, computed, onMounted, onUnmounted } from 'vue'
-import { useRoute } from 'vue-router'
-import { store, setCurrentFolder, setActiveFile, setFileVersion, getFilesInFolder, onTreeUpdate, closeSidebar, dismissToast, openSearchModal, showToast } from './store.js'
-import { getFiles, getFile } from './api.js'
-import Navbar from './components/Navbar.vue'
+import { computed, onMounted, onUnmounted } from 'vue'
+import { store, closeSidebar, dismissToast, openSearchModal } from './store.js'
 import TabBar from './components/TabBar.vue'
 import Editor from './components/Editor.vue'
 import Footer from './components/Footer.vue'
 import Sidebar from './components/Sidebar.vue'
 import SearchModal from './components/SearchModal.vue'
-import HistoryModal from './components/HistoryModal.vue'
-import TrashModal from './components/TrashModal.vue'
-import SettingsModal from './components/SettingsModal.vue'
 import MoveFileModal from './components/MoveFileModal.vue'
-import PreviewDeleteModal from './components/PreviewDeleteModal.vue'
-
-const route = useRoute()
 
 // Only override the desktop-default 400px width with the live, resizable value when in
 // push-layout mode — on mobile the overlay sidebar keeps its own 85vw/max-400px CSS rule,
@@ -62,80 +48,15 @@ function onToastAction() {
   action?.handler()
 }
 
-function folderFromRoute() {
-  const p = route.params.pathMatch
-  if (!p) return ''
-  const joined = Array.isArray(p) ? p.join('/') : p
-  return joined.replace(/^\//, '').replace(/\/$/, '')
-}
-
-async function navigateToFolder(folderPath) {
-  setCurrentFolder(folderPath)
-  await pickActiveFile(folderPath)
-}
-
-async function pickActiveFile(folderPath) {
-  const files = getFilesInFolder(folderPath)
-  let fileId = store.pendingFileId
-  if (fileId) {
-    if (!files.find(f => f.fileId === fileId)) {
-      setActiveFile(null) // tree not updated yet; onTreeUpdate will retry
-      return
-    }
-    store.pendingFileId = null
-  } else {
-    fileId = files.length ? [...files].sort((a, b) => b.lastOpened - a.lastOpened)[0].fileId : null
-  }
-  if (!fileId) {
-    setActiveFile(null)
-    return
-  }
-  try {
-    const data = await getFile(fileId)
-    store.fileContents[fileId] = data.content
-    setFileVersion(fileId, data.versionId)
-    setActiveFile(fileId)
-  } catch (e) {
-    showToast(e.message, 'error')
-    setActiveFile(null)
-  }
-}
-
-onMounted(async () => {
-  const tree = await getFiles()
-  store.fileTree = tree
-  await navigateToFolder(folderFromRoute())
-})
-
-watch(() => store.settings?.title, (title) => {
-  if (title != null) document.title = title
-}, { immediate: true })
-
-// global Ctrl+F / Cmd+F: open the Search Modal instead of native browser find,
-// unless the user has set ctrlFSearch to false (defaults to true before settings load)
+// Ctrl+F stays the browser's native find (the editor renders every line). The
+// workspace Search Modal opens with Ctrl+Shift+F or the magnifier in the TabBar.
 function onKeydown(e) {
-  if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'f') return
-  if (store.settings?.ctrlFSearch ?? true) {
-    e.preventDefault()
-    openSearchModal()
-  }
+  if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || e.key.toLowerCase() !== 'f') return
+  e.preventDefault()
+  openSearchModal()
 }
 onMounted(() => window.addEventListener('keydown', onKeydown))
 onUnmounted(() => window.removeEventListener('keydown', onKeydown))
-
-// tree updates from WS: re-pick active file in case folder contents changed
-onTreeUpdate(async () => {
-  const files = getFilesInFolder(store.currentFolderPath)
-  if (store.pendingFileId && files.find(f => f.fileId === store.pendingFileId)) {
-    await pickActiveFile(store.currentFolderPath)
-  } else if (store.activeFileId && !files.find(f => f.fileId === store.activeFileId)) {
-    await pickActiveFile(store.currentFolderPath)
-  }
-})
-
-watch(() => route.params.pathMatch, async () => {
-  await navigateToFolder(folderFromRoute())
-})
 </script>
 
 <style scoped>

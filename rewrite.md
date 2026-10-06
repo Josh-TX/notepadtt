@@ -54,7 +54,7 @@ Drastic simplification: stateless server, filesystem is the only persistent stor
 ## Search
 - Ctrl+F: browser-native find. Editor already uses CodeMirror 5 `viewportMargin: Infinity` (`Editor.vue:37`) — keep.
 - Search Modal kept. Server shells out to `grep`/`rg` over root per query; top 10 results with snippets; filename matches too.
-- OPEN: UI entry point for Search Modal (Sidebar Search row removed).
+- Search Modal entry points (decided during implementation): Ctrl+Shift+F and a magnifier button at the right end of the TabBar. Filename rows in results are clickable too.
 
 ## FileTree / Sidebar
 - Folders first, then files; each case-insensitive alphabetical. No manual ordering.
@@ -63,6 +63,17 @@ Drastic simplification: stateless server, filesystem is the only persistent stor
 ## Editor / Footer
 - Editor unchanged (CodeMirror 5, word wrap, line numbers).
 - Footer unchanged minus History button.
+
+## Implementation decisions (made while building; not discussed)
+- Backend package rewritten fresh (no DB layer left to adapt); edit.go merge functions, walk.go, ws.go kept and adapted. Single `Server.mu` serializes registry/edits/disk writes; watcher takes it before re-reading disk, so own-write echoes compare equal and are ignored.
+- All file ops are path-based (tree nodes have no FileId): `PUT /api/rename`, `PUT /api/move`, `DELETE /api/entries`, `POST /api/duplicate`. FileId only for tabs/content/edits.
+- Move (modal + drag-and-drop in the tree) kept; conflicts -> 409, move into itself -> 400.
+- Duplicate opens the copy as a tab.
+- Tree folder menu "New File" creates inside that folder; only the TabBar "+" is root-only.
+- Deleting a non-empty, non-symlink folder asks `confirm()` first (still undoable).
+- Sidebar toggle moved into the TabBar (left). Word wrap and sidebar open/width persist in browser `localStorage` (server stays stateless). Editor font size / markdown mode / color overrides settings are gone; defaults hardcoded (14px, markdown for `new *` files).
+- Dockerfile runtime image changed from distroless to alpine + ripgrep (search shells out; distroless has no grep).
+- vue-router removed (no folder routes any more).
 
 ## Notes / conflicts flagged
 - Repo used SQLite, not MySQL; all DB-dependent glossary terms (Term, FileVersion, FileTrash, OrderNum, CurrentFolder, Navbar, HistoryModal, TrashModal) need removal/update in CLAUDE.md and GLOSSARY.md.

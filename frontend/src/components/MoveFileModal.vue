@@ -56,11 +56,9 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import { store, closeMoveModal, getFolderNode, setActiveFile, setFileVersion, showToast } from '../store.js'
-import { moveFile, moveFolder } from '../api.js'
+import { store, closeMoveModal, getFolderNode, showToast } from '../store.js'
+import { move } from '../api.js'
 
-const router = useRouter()
 const inputEl = ref(null)
 const inputPath = ref('')
 
@@ -125,36 +123,11 @@ function newFolder() {
 
 async function tryMove() {
   if (!canMove.value) return
-  const item = store.moveModalItem
-  const newPath = inputPath.value
-  const destDir = dirPart.value
-
-  if (item.type === 'file') {
-    try {
-      const data = await moveFile(item.fileId, newPath)
-      close()
-      if (destDir === store.currentFolderPath) {
-        store.fileContents[item.fileId] = data.content
-        setFileVersion(item.fileId, data.versionId)
-        setActiveFile(item.fileId)
-      } else {
-        store.pendingFileId = item.fileId
-        router.push(destDir ? '/' + destDir : '/')
-      }
-    } catch (err) {
-      showToast('Failed to move file', 'error')
-    }
-  } else {
-    try {
-      await moveFolder(item.path, newPath)
-      close()
-      if (store.currentFolderPath === item.path || store.currentFolderPath.startsWith(item.path + '/')) {
-        const newCurrentPath = newPath + store.currentFolderPath.slice(item.path.length)
-        router.push(newCurrentPath ? '/' + newCurrentPath : '/')
-      }
-    } catch (err) {
-      showToast('Failed to move folder', 'error')
-    }
+  try {
+    await move(store.moveModalItem.path, inputPath.value)
+    close()
+  } catch (err) {
+    showToast(err.message, 'error')
   }
 }
 </script>

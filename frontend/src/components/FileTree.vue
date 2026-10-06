@@ -3,7 +3,7 @@
     <div
       v-if="label !== undefined"
       class="tree-row folder-row"
-      :class="{ 'menu-open': menuFolderPath === (node.path ?? ''), 'current-folder': currentFolderPath === (node.path ?? '') }"
+      :class="{ 'menu-open': menuFolderPath === (node.path ?? '') }"
       :data-path="node.path ?? ''"
       @click="$emit('toggle', node.path ?? '')"
       @contextmenu.prevent="$emit('folder-menu', $event, node)"
@@ -17,14 +17,13 @@
         </svg>
       </span>
       <span class="tree-label">{{ label }}<span v-if="node.isLink" class="link-indicator" title="Symlink">🔗</span></span>
-      <button class="open-btn" @click.stop="$emit('open-folder', node.path ?? '')" title="Open folder">⤴</button>
     </div>
 
     <ul v-if="label === undefined || expanded[node.path ?? '']" class="tree-list">
     <li v-for="folder in node.folders" :key="folder.path" :class="dropClassFor(folder.path)">
       <div
         class="tree-row folder-row"
-        :class="{ 'menu-open': menuFolderPath === folder.path, 'current-folder': currentFolderPath === folder.path, dragging: dragItem?.type === 'folder' && dragItem.path === folder.path }"
+        :class="{ 'menu-open': menuFolderPath === folder.path, dragging: dragItem?.type === 'folder' && dragItem.path === folder.path }"
         :data-path="folder.path"
         :draggable="dragEnabled"
         @click="$emit('toggle', folder.path)"
@@ -41,25 +40,23 @@
           </svg>
         </span>
         <span class="tree-label">{{ folder.name }}<span v-if="folder.isLink" class="link-indicator" title="Symlink">🔗</span></span>
-        <button class="open-btn" @click.stop="$emit('open-folder', folder.path)" title="Open folder">⤴</button>
       </div>
       <FileTree
         v-if="expanded[folder.path]"
         :node="folder"
         :expanded="expanded"
-        :menuFileId="menuFileId"
+        :menuFilePath="menuFilePath"
         :menuFolderPath="menuFolderPath"
         @toggle="(p) => $emit('toggle', p)"
-        @open-folder="(p) => $emit('open-folder', p)"
         @open-file="(f) => $emit('open-file', f)"
         @folder-menu="(e, f) => $emit('folder-menu', e, f)"
         @file-menu="(e, f) => $emit('file-menu', e, f)"
       />
     </li>
-    <li v-for="file in node.files" :key="file.fileId">
+    <li v-for="file in node.files" :key="file.path">
       <div
         class="tree-row file-row"
-        :class="{ active: activeFileId === file.fileId, 'menu-open': menuFileId === file.fileId, dragging: dragItem?.type === 'file' && dragItem.fileId === file.fileId }"
+        :class="{ active: activePath === file.path, 'menu-open': menuFilePath === file.path, dragging: dragItem?.type === 'file' && dragItem.path === file.path }"
         :data-parent-path="node.path ?? ''"
         :draggable="dragEnabled"
         @click="$emit('open-file', file)"
@@ -82,13 +79,12 @@ defineProps({
   node: Object,
   expanded: Object,
   label: String,
-  menuFileId: String,
+  menuFilePath: String,
   menuFolderPath: String,
 })
-defineEmits(['toggle', 'open-folder', 'open-file', 'folder-menu', 'file-menu'])
+defineEmits(['toggle', 'open-file', 'folder-menu', 'file-menu'])
 
-const activeFileId = computed(() => store.activeFileId)
-const currentFolderPath = computed(() => store.currentFolderPath)
+const activePath = computed(() => store.tabs.find(t => t.fileId === store.activeFileId)?.path ?? null)
 const dragItem = computed(() => store.dragItem)
 const dragOverPath = computed(() => store.dragOverPath)
 
@@ -112,7 +108,7 @@ function onFolderDragStart(e, folder) {
 }
 
 function onFileDragStart(e, file) {
-  store.dragItem = { type: 'file', fileId: file.fileId, path: file.path, name: file.name }
+  store.dragItem = { type: 'file', path: file.path, name: file.name }
   e.dataTransfer.effectAllowed = 'move'
 }
 
@@ -147,20 +143,4 @@ function onItemDragEnd() {
 .tree-icon { color: #aaa; width: 14px; flex-shrink: 0; display: flex; align-items: center; }
 .tree-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .link-indicator { flex-shrink: 0; font-size: 13px; opacity: 0.8; margin-left: 3px; }
-.open-btn {
-  display: none;
-  align-items: center;
-  height: 14px;
-  line-height: 14px;
-  font-size: 12px;
-  background: transparent;
-  border: none;
-  color: #aaa;
-  cursor: pointer;
-  padding: 0 4px;
-  border-radius: 2px;
-}
-.open-btn:hover { color: #fff; }
-.folder-row:hover .open-btn { display: flex; }
-.folder-row.current-folder { border-left: 2px solid #0078d4; padding-left: 0 }
 </style>

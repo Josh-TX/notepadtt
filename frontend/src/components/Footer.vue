@@ -6,9 +6,8 @@
       <button class="footer-btn" :class="{ active: store.wordWrap }" @click="toggleWordWrap" title="Toggle word wrap">
         <span class="wrap-check" :class="{ hidden: !store.wordWrap }">✓</span> Wrap
       </button>
-      <button class="footer-btn" @click="openHistory" title="View file history"><span class="icon">🕓</span> History</button>
     </div>
-    <div v-if="activeFile" class="right" ref="rightEl" :class="{ 'hidden-for-space': !infoFits }">
+    <div v-if="activeFile && showingContent" class="right" ref="rightEl" :class="{ 'hidden-for-space': !infoFits }">
       <span>length: {{ length }}&nbsp;&nbsp;lines: {{ lines }}</span>
       <span class="lang-label">{{ langLabel }}</span>
     </div>
@@ -17,8 +16,7 @@
 
 <script setup>
 import { computed, ref, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
-import { store, getFilesInFolder, editorActions, openHistoryModal, showToast } from '../store.js'
-import { updateWrap } from '../api.js'
+import { store, editorActions, setWordWrap } from '../store.js'
 import { getModeInfo } from '../langMode.js'
 
 const activeContent = computed(() => {
@@ -26,10 +24,10 @@ const activeContent = computed(() => {
   return store.fileContents[store.activeFileId] ?? ''
 })
 
-const activeFile = computed(() => {
-  if (!store.activeFileId) return null
-  return getFilesInFolder(store.currentFolderPath).find(f => f.fileId === store.activeFileId)
-})
+const activeFile = computed(() => store.tabs.find(t => t.fileId === store.activeFileId) ?? null)
+
+// Stats only make sense when the editor is actually showing the file's text.
+const showingContent = computed(() => store.fileStatus[store.activeFileId]?.kind === 'ok')
 
 const length = computed(() => {
   if (activeContent.value === null) return 0
@@ -43,28 +41,14 @@ const lines = computed(() => {
 
 const langLabel = computed(() => {
   if (!activeFile.value) return null
-  const info = getModeInfo(activeFile.value.name, store.settings?.markdownMode ?? 0)
+  const info = getModeInfo(activeFile.value.name, 0)
   return info?.name ?? 'text'
 })
 
 function undo() { editorActions.undo() }
 function redo() { editorActions.redo() }
 
-async function toggleWordWrap() {
-  const next = !store.wordWrap
-  store.wordWrap = next
-  try {
-    await updateWrap(next)
-  } catch (e) {
-    store.wordWrap = !next
-    showToast('Failed to save word wrap', 'error')
-  }
-}
-
-function openHistory() {
-  if (!activeFile.value) return
-  openHistoryModal(activeFile.value)
-}
+function toggleWordWrap() { setWordWrap(!store.wordWrap) }
 
 const footerEl = ref(null)
 const leftEl = ref(null)

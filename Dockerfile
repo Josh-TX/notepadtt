@@ -22,8 +22,9 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
     -trimpath -ldflags="-s -w" -o /notepadtt .
 RUN mkdir /data
 
-# Stage 3 - minimal runtime image
-FROM gcr.io/distroless/static-debian12
+# Stage 3 - minimal runtime image (ripgrep is shelled out to for workspace search)
+FROM alpine:3.20
+RUN apk add --no-cache ripgrep
 
 COPY --from=go-build /notepadtt /notepadtt
 COPY --from=go-build /data /data

@@ -9,21 +9,6 @@
       </button>
       <span class="sidebar-title">notepadtt</span>
     </div>
-    <div class="search-row" @click="openSearchModal" role="button" tabindex="0" @keydown.enter="openSearchModal">
-      <svg class="search-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="6.5" cy="6.5" r="4"/>
-        <line x1="10" y1="10" x2="14" y2="14"/>
-      </svg>
-      <span>Search</span>
-    </div>
-    <div class="trash-row" @click="openTrashModal" role="button" tabindex="0" @keydown.enter="openTrashModal">
-      <svg class="trash-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        <polyline points="2,4 14,4"/>
-        <path d="M3,4 L4,14 L12,14 L13,4"/>
-        <path d="M6,4 V2 H10 V4"/>
-      </svg>
-      <span>Trash</span>
-    </div>
     <div
       class="sidebar-scroll"
       ref="treeScrollEl"
@@ -36,25 +21,15 @@
         v-if="store.fileTree"
         :node="store.fileTree"
         :expanded="expanded"
-        :menuFileId="menuFile?.fileId"
+        :menuFilePath="menuFile?.path"
         :menuFolderPath="menuFolder?.path"
         label="root"
         @toggle="toggleFolder"
-        @open-folder="openFolder"
         @open-file="openFile"
         @folder-menu="openFolderMenu"
         @file-menu="openFileMenu"
       />
     </div>
-    <div class="sidebar-footer">
-      <div class="settings-row" @click="openSettingsModal" role="button" tabindex="0" @keydown.enter="openSettingsModal">
-        <svg class="settings-icon" width="15" height="15" viewBox="0 0 16 16" fill="currentColor" stroke="none">
-          <path fill-rule="evenodd" d="M12.33 5.5L14.76 6.19L14.76 9.81L12.33 10.5L12.95 12.95L9.81 14.76L8 13L6.19 14.76L3.05 12.95L3.67 10.5L1.24 9.81L1.24 6.19L3.67 5.5L3.05 3.05L6.19 1.24L8 3L9.81 1.24L12.95 3.05Z M8 5.8A2.2 2.2 0 1 1 8 10.2A2.2 2.2 0 1 1 8 5.8Z"/>
-        </svg>
-        <span>Settings</span>
-      </div>
-    </div>
-
     <ContextMenu
       v-if="menuFolder"
       :x="menuX"
@@ -84,14 +59,11 @@
 
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { store, closeSidebar, setActiveFile, setFileVersion, onTreeUpdate, openSearchModal, openHistoryModal, openTrashModal, openSettingsModal, openMoveModal, openPreviewDeleteModal, showToast, getFolderNode, folderOfPath, willBeTracked } from '../store.js'
-import { createFile, createFolder, deleteFolder, previewDeleteFolder, renameFolder, getFile, renameFile, deleteFile, duplicateFile, updateSidebarWidth, updateDesktopSidebarOpen, moveFile, moveFolder } from '../api.js'
-import { restoreAndOpen } from '../restore.js'
+import { store, closeSidebar, saveSidebarWidth, openPath, activateNewTab, openMoveModal, deleteWithUndo, showToast, getFolderNode, folderOfPath } from '../store.js'
+import { createFile, createFolder, rename, duplicate, move, downloadUrl } from '../api.js'
 import FileTree from './FileTree.vue'
 import ContextMenu from './ContextMenu.vue'
 
-const router = useRouter()
 const expanded = ref({})
 const menuFolder = ref(null)
 const menuFile = ref(null)
@@ -117,41 +89,25 @@ function onResizeMove(e) {
   store.sidebarWidth = Math.min(600, Math.max(100, next))
 }
 
-async function onResizeEnd(e) {
+function onResizeEnd(e) {
   if (!store.sidebarDragging) return
   store.sidebarDragging = false
   e.target.releasePointerCapture(e.pointerId)
-  const width = store.sidebarWidth
-  try {
-    await updateSidebarWidth(width)
-  } catch (err) {
-    store.sidebarWidth = preDragWidth
-    showToast('Failed to save sidebar width', 'error')
-  }
+  saveSidebarWidth()
 }
 
-// The collapse button only ever closes the sidebar, but while in push-layout (desktop)
-// mode that close is also persisted as DesktopSidebarOpen, mirroring Navbar's toggle.
-async function onCollapseClick() {
+function onCollapseClick() {
   closeSidebar()
-  if (!store.isPushLayout) return
-  try {
-    await updateDesktopSidebarOpen(false)
-  } catch (err) {
-    store.sidebarOpen = true
-    showToast('Failed to save sidebar state', 'error')
-  }
 }
 
-// expand path to current folder on mount
 onMounted(() => {
   expanded.value[''] = true
-  expandToPath(store.currentFolderPath)
+  expandToPath(folderOfPath(activePath.value))
 })
 
-watch(() => store.currentFolderPath, (p) => {
-  expandToPath(p)
-})
+// Reveal the active tab's file in the tree.
+const activePath = computed(() => store.tabs.find(t => t.fileId === store.activeFileId)?.path ?? '')
+watch(activePath, (p) => expandToPath(folderOfPath(p)))
 
 function expandToPath(path) {
   if (!path) return
@@ -196,8 +152,7 @@ watch(() => store.dragItem, async (val, oldVal) => {
       const item = oldVal
       const valid = !(item.type === 'folder' && (path === item.path || path.startsWith(item.path + '/')))
       if (valid && path !== folderOfPath(item.path)) {
-        if (item.type === 'file') await handleFileDrop(item, path)
-        else await handleFolderDrop(item, path)
+        await handleDrop(item, path)
       }
     }
     dropHandled = false
@@ -331,11 +286,7 @@ async function onTreeDrop() {
   if (!item || targetPath === null) return
   if (targetPath === folderOfPath(item.path)) return // dropped onto its own current parent: no-op
 
-  if (item.type === 'file') {
-    await handleFileDrop(item, targetPath)
-  } else {
-    await handleFolderDrop(item, targetPath)
-  }
+  await handleDrop(item, targetPath)
 }
 
 function hasNameConflict(targetPath, name) {
@@ -344,66 +295,20 @@ function hasNameConflict(targetPath, name) {
   return node.folders.some(f => f.name === name) || node.files.some(f => f.name === name)
 }
 
-async function handleFileDrop(item, targetPath) {
+async function handleDrop(item, targetPath) {
   if (hasNameConflict(targetPath, item.name)) {
-    showToast(`File named "${item.name}" already exists in ${targetPath || 'root'}`, 'error')
+    showToast(`"${item.name}" already exists in ${targetPath || 'root'}`, 'error')
     return
   }
-  const newPath = targetPath ? targetPath + '/' + item.name : item.name
   try {
-    const data = await moveFile(item.fileId, newPath)
-    if (targetPath === store.currentFolderPath) {
-      store.fileContents[item.fileId] = data.content
-      setFileVersion(item.fileId, data.versionId)
-      setActiveFile(item.fileId)
-    } else {
-      store.pendingFileId = item.fileId
-      router.push(targetPath ? '/' + targetPath : '/')
-    }
+    await move(item.path, targetPath ? targetPath + '/' + item.name : item.name)
   } catch (err) {
-    showToast('Failed to move file', 'error')
+    showToast(err.message, 'error')
   }
 }
 
-async function handleFolderDrop(item, targetPath) {
-  if (hasNameConflict(targetPath, item.name)) {
-    showToast(`A file or folder named "${item.name}" already exists there`, 'error')
-    return
-  }
-  const newPath = targetPath ? targetPath + '/' + item.name : item.name
-  try {
-    await moveFolder(item.path, newPath)
-    if (store.currentFolderPath === item.path || store.currentFolderPath.startsWith(item.path + '/')) {
-      const newCurrentPath = newPath + store.currentFolderPath.slice(item.path.length)
-      router.push(newCurrentPath ? '/' + newCurrentPath : '/')
-    }
-  } catch (err) {
-    showToast('Failed to move folder', 'error')
-  }
-}
-
-async function openFolder(path) {
-  router.push('/' + path)
-  if (window.innerWidth < 768) closeSidebar()
-}
-
-async function openFile(file) {
-  const folderPath = file.path.includes('/')
-    ? file.path.split('/').slice(0, -1).join('/')
-    : ''
-  if (folderPath === store.currentFolderPath) {
-    try {
-      const data = await getFile(file.fileId)
-      store.fileContents[file.fileId] = data.content
-      setFileVersion(file.fileId, data.versionId)
-      setActiveFile(file.fileId)
-    } catch (e) {
-      showToast(e.message, 'error')
-    }
-  } else {
-    store.pendingFileId = file.fileId
-    router.push(folderPath ? '/' + folderPath : '/')
-  }
+function openFile(file) {
+  openPath(file.path)
   if (window.innerWidth < 768) closeSidebar()
 }
 
@@ -435,7 +340,7 @@ const folderMenuItems = computed(() => {
   ]
   if (folder?.path !== '') {
     items.push({ label: 'Rename Folder', action: () => doRenameFolder(folder) })
-    items.push({ label: 'Move Folder', action: () => doMoveFolder(folder) })
+    items.push({ label: 'Move Folder', action: () => openMoveModal({ type: 'folder', path: folder.path, name: folder.name }) })
     items.push({ label: 'Delete Folder', action: () => doDeleteFolder(folder) })
   }
   return items
@@ -445,114 +350,68 @@ const fileMenuItems = computed(() => {
   const file = menuFile.value
   return [
     { label: 'Rename', action: () => doRenameFile(file) },
-    { label: 'Move', action: () => doMoveFile(file) },
-    { label: 'Delete', action: () => doDeleteFile(file) },
+    { label: 'Move', action: () => openMoveModal({ type: 'file', path: file.path, name: file.name }) },
+    { label: 'Delete', action: () => deleteWithUndo(file.path, file.name) },
     { label: 'Duplicate', action: () => doDuplicateFile(file) },
     { label: 'Download', action: () => doDownloadFile(file) },
-    { label: 'History', action: () => doHistoryFile(file) },
   ]
 })
 
-function doHistoryFile(file) {
-  menuFile.value = null
-  openHistoryModal(file)
-}
-
-function doMoveFile(file) {
-  menuFile.value = null
-  openMoveModal({ type: 'file', fileId: file.fileId, path: file.path, name: file.name })
-}
-
-function doMoveFolder(folder) {
-  menuFolder.value = null
-  openMoveModal({ type: 'folder', path: folder.path, name: folder.name })
-}
-
-async function doRenameFile(file) {
-  menuFile.value = null
-  const newName = window.prompt('Rename file:', file.name)
-  if (!newName || newName === file.name) return
-  if (!willBeTracked(newName)) {
-    if (!confirm(`"${newName}" doesn't have a common text file extension, so it won't be tracked (no history, search, or version recovery). Enable "All Files" under Settings if you want it tracked.`)) return
+async function doRename(item, label) {
+  const newName = window.prompt(label, item.name)
+  if (!newName || newName === item.name) return
+  try {
+    await rename(item.path, newName)
+  } catch (e) {
+    showToast(e.message, 'error')
   }
-  await renameFile(file.fileId, newName)
 }
-
-async function doDeleteFile(file) {
-  menuFile.value = null
-  await deleteFile(file.fileId)
-  showToast(`Deleted "${file.name}"`, null, { label: 'UNDO', handler: () => restoreAndOpen(file.fileId) })
-}
+const doRenameFile = (file) => doRename(file, 'Rename file:')
+const doRenameFolder = (folder) => doRename(folder, 'Rename folder:')
 
 async function doDuplicateFile(file) {
-  menuFile.value = null
-  await duplicateFile(file.fileId)
+  try {
+    await activateNewTab(await duplicate(file.path))
+  } catch (e) {
+    showToast(e.message, 'error')
+  }
 }
 
 function doDownloadFile(file) {
-  menuFile.value = null
-  const content = store.fileContents[file.fileId] ?? ''
-  const blob = new Blob([content], { type: 'text/plain' })
-  const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
-  a.href = url
+  a.href = downloadUrl(file.path)
   a.download = file.name
   a.click()
-  URL.revokeObjectURL(url)
 }
 
+// New files from the tree's folder menu are created in that folder (the TabBar "+" always
+// creates in the data root).
 async function doNewFile(folder) {
-  menuFolder.value = null
-  const data = await createFile(folder.path)
-  if (folder.path === store.currentFolderPath) {
-    store.fileContents[data.fileId] = data.content
-    setFileVersion(data.fileId, data.versionId)
-    setActiveFile(data.fileId)
-  } else {
-    store.pendingFileId = data.fileId
-    router.push(folder.path ? '/' + folder.path : '/')
+  try {
+    await activateNewTab(await createFile(folder.path))
+  } catch (e) {
+    showToast(e.message, 'error')
   }
 }
 
 async function doNewFolder(folder) {
-  menuFolder.value = null
   const name = window.prompt('New folder name:')
   if (!name) return
-  await createFolder(folder.path, name)
-}
-
-async function doRenameFolder(folder) {
-  menuFolder.value = null
-  const name = window.prompt('Rename folder:', folder.name)
-  if (!name || name === folder.name) return
-  await renameFolder(folder.path, name)
-}
-
-function navigateUpIfInside(folderPath) {
-  if (store.currentFolderPath === folderPath || store.currentFolderPath.startsWith(folderPath + '/')) {
-    const parent = folderPath.includes('/') ? folderPath.split('/').slice(0, -1).join('/') : ''
-    router.push(parent ? '/' + parent : '/')
+  try {
+    await createFolder(folder.path, name)
+    expanded.value[folder.path] = true
+  } catch (e) {
+    showToast(e.message, 'error')
   }
 }
 
-// A symlinked folder only ever gets unlinked (its target is untouched), and an empty
-// folder has nothing to lose - both delete immediately with no confirmation. Anything
-// else opens PreviewDeleteModal so the user can see what's tracked (recoverable via
-// trash) vs untracked (permanently lost) before confirming.
+// Symlinks and empty folders are removed without asking; anything else confirms first
+// (there's still a short UNDO window afterwards).
 async function doDeleteFolder(folder) {
-  menuFolder.value = null
-  if (folder.isLink) {
-    await deleteFolder(folder.path)
-    navigateUpIfInside(folder.path)
-    return
-  }
-  const stats = await previewDeleteFolder(folder.path)
-  if (stats.trackedCount === 0 && stats.untrackedCount === 0) {
-    await deleteFolder(folder.path)
-    navigateUpIfInside(folder.path)
-    return
-  }
-  openPreviewDeleteModal(folder, stats)
+  const empty = !folder.files.length && !folder.folders.length
+  if (!folder.isLink && !empty &&
+      !confirm(`Delete folder "${folder.name}" and everything in it?\n\nYou'll have a few seconds to undo.`)) return
+  await deleteWithUndo(folder.path, folder.name)
 }
 </script>
 
@@ -593,21 +452,6 @@ async function doDeleteFolder(folder) {
   color: #bbb;
   letter-spacing: 0.08em;
 }
-.search-row, .trash-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  cursor: pointer;
-  color: #ccc;
-  user-select: none;
-  border-bottom: 1px solid #2d2d2d;
-  flex-shrink: 0;
-  font-size: 13px;
-}
-.search-row:hover, .trash-row:hover { background: #2a2d2e; color: #fff; }
-.search-icon, .trash-icon { flex-shrink: 0; color: #aaa; }
-.search-row:hover .search-icon, .trash-row:hover .trash-icon { color: #fff; }
 .sidebar-scroll {
   flex: 1;
   overflow-y: auto;
@@ -616,23 +460,6 @@ async function doDeleteFolder(folder) {
   scrollbar-color: #555 transparent;
   padding: 4px 0;
 }
-.sidebar-footer {
-  border-top: 1px solid #2d2d2d;
-  flex-shrink: 0;
-}
-.settings-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  cursor: pointer;
-  color: #ccc;
-  user-select: none;
-  font-size: 13px;
-}
-.settings-row:hover { background: #2a2d2e; color: #fff; }
-.settings-icon { flex-shrink: 0; color: #aaa; }
-.settings-row:hover .settings-icon { color: #fff; }
 .resize-handle {
   position: fixed;
   top: 0;

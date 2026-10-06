@@ -17,7 +17,6 @@
   },
   "dependencies": {
     "codemirror": "^5.65.21",
-    "vue": "^3.5.38",
-    "vue-router": "^5.1.0"
+    "vue": "^3.5.38"
   }
 }
