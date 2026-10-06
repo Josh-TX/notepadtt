@@ -17,6 +17,7 @@ function lsSet(key, value) {
 
 const state = reactive({
   cid: null,
+  wsConnected: false,
   fileTree: null,           // FolderNode from server
   tabs: [],                 // [{ fileId, path, name, absPath }] — shared across clients
   activeFileId: null,       // per client
@@ -47,6 +48,8 @@ export const store = state
 
 let ws = null
 let wsReconnectTimer = null
+let wsRetries = 0
+let activateSeq = 0
 const contentListeners = {}   // fileId -> Set of callbacks
 const forcedLarge = new Set() // fileIds this client chose "display anyway" for
 
@@ -65,11 +68,14 @@ export function initLayoutFlags() {
 
 export function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-  ws = new WebSocket(`${proto}://${location.host}/ws`)
+  const sock = new WebSocket(`${proto}://${location.host}/ws`)
+  ws = sock
+  sock.onopen = () => { wsRetries = 0 }
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data)
     if (msg.type === 'init') {
       state.cid = msg.cid
+      state.wsConnected = true
       syncFromServer()
     } else if (msg.type === 'filesystem') {
       state.fileTree = msg.tree
@@ -82,9 +88,15 @@ export function connectWS() {
       showToast('Edit conflict: your change was overridden by another client', 'error')
     }
   }
-  ws.onclose = () => {
+  // The editor is read-only while disconnected (see Editor.vue), so no edits are
+  // lost to a dead socket; the reconnect's syncFromServer refetches everything.
+  sock.onclose = () => {
+    if (ws !== sock) return
+    state.wsConnected = false
     if (wsReconnectTimer) clearTimeout(wsReconnectTimer)
-    wsReconnectTimer = setTimeout(() => connectWS(), 2000)
+    const delay = Math.min(2000 * 2 ** wsRetries, 30000)
+    wsRetries++
+    wsReconnectTimer = setTimeout(() => connectWS(), delay)
   }
 }
 
@@ -141,6 +153,7 @@ function neighborAfterClose(oldTabs, closedId, remaining) {
 
 export async function activateTab(fileId, force = false) {
   if (force) forcedLarge.add(fileId)
+  const seq = ++activateSeq
   try {
     const data = await api.getFile(fileId, forcedLarge.has(fileId))
     if (data.binary) {
@@ -156,7 +169,8 @@ export async function activateTab(fileId, force = false) {
         state.fileVersions[fileId] = data.versionId
       }
     }
-    state.activeFileId = fileId
+    // a newer tab switch started while this fetch was in flight; it wins
+    if (seq === activateSeq) state.activeFileId = fileId
   } catch (e) {
     showToast(e.message, 'error')
   }
@@ -257,6 +271,8 @@ export function sendEdit(fileId, from, to, text, removed) {
   state.fileVersions[fileId] = newVersionId
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'edit', fileId, currentVersionId, newVersionId, from, to, text, removed }))
+  } else {
+    showToast('Disconnected: edit not saved', 'error')
   }
 }
 

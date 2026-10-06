@@ -5,6 +5,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/sergi/go-diff/diffmatchpatch"
 )
@@ -29,46 +30,79 @@ type EditMessage struct {
 	Removed          []string `json:"removed"`
 }
 
+// CodeMirror 5 counts Ch in UTF-16 code units, so positions are interpreted the
+// same way here (not as bytes or runes).
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
+}
+
+// utf16Len returns the length of s in UTF-16 code units.
+func utf16Len(s string) int {
+	if isASCII(s) {
+		return len(s)
+	}
+	return len(utf16.Encode([]rune(s)))
+}
+
+// splitUTF16 splits s at UTF-16 offset ch.
+func splitUTF16(s string, ch int) (string, string, bool) {
+	if ch < 0 {
+		return "", "", false
+	}
+	if isASCII(s) {
+		if ch > len(s) {
+			return "", "", false
+		}
+		return s[:ch], s[ch:], true
+	}
+	u := utf16.Encode([]rune(s))
+	if ch > len(u) {
+		return "", "", false
+	}
+	return string(utf16.Decode(u[:ch])), string(utf16.Decode(u[ch:])), true
+}
+
 // extractRange returns the lines lying between from and to (CodeMirror's "removed"
 // semantics: a partial first/last line, full lines in between).
 func extractRange(lines []string, from, to Pos) ([]string, bool) {
 	if from.Line < 0 || to.Line < from.Line || to.Line >= len(lines) {
 		return nil, false
 	}
-	firstRunes := []rune(lines[from.Line])
-	lastRunes := []rune(lines[to.Line])
-	if from.Ch < 0 || from.Ch > len(firstRunes) || to.Ch < 0 || to.Ch > len(lastRunes) {
+	_, firstTail, ok1 := splitUTF16(lines[from.Line], from.Ch)
+	lastHead, lastTail, ok2 := splitUTF16(lines[to.Line], to.Ch)
+	if !ok1 || !ok2 {
 		return nil, false
 	}
 	if from.Line == to.Line {
 		if from.Ch > to.Ch {
 			return nil, false
 		}
-		return []string{string(firstRunes[from.Ch:to.Ch])}, true
+		return []string{firstTail[:len(firstTail)-len(lastTail)]}, true
 	}
 	result := make([]string, 0, to.Line-from.Line+1)
-	result = append(result, string(firstRunes[from.Ch:]))
-	for i := from.Line + 1; i < to.Line; i++ {
-		result = append(result, lines[i])
-	}
-	result = append(result, string(lastRunes[:to.Ch]))
+	result = append(result, firstTail)
+	result = append(result, lines[from.Line+1:to.Line]...)
+	result = append(result, lastHead)
 	return result, true
 }
 
 // replaceRange applies a CodeMirror-style change (replace from..to with text) to a
 // slice of lines, returning the resulting slice.
 func replaceRange(lines []string, from, to Pos, text []string) ([]string, bool) {
-	if from.Line < 0 || to.Line < from.Line || to.Line >= len(lines) {
+	if from.Line < 0 || to.Line < from.Line || to.Line >= len(lines) || len(text) == 0 {
 		return nil, false
 	}
-	firstRunes := []rune(lines[from.Line])
-	lastRunes := []rune(lines[to.Line])
-	if from.Ch < 0 || from.Ch > len(firstRunes) || to.Ch < 0 || to.Ch > len(lastRunes) {
+	prefix, _, ok1 := splitUTF16(lines[from.Line], from.Ch)
+	_, suffix, ok2 := splitUTF16(lines[to.Line], to.Ch)
+	if !ok1 || !ok2 || (from.Line == to.Line && from.Ch > to.Ch) {
 		return nil, false
 	}
-	prefix := string(firstRunes[:from.Ch])
-	suffix := string(lastRunes[to.Ch:])
-
 	var replacement []string
 	if len(text) == 1 {
 		replacement = []string{prefix + text[0] + suffix}
@@ -78,7 +112,6 @@ func replaceRange(lines []string, from, to Pos, text []string) ([]string, bool) 
 		copy(replacement[1:len(text)-1], text[1:len(text)-1])
 		replacement[len(text)-1] = text[len(text)-1] + suffix
 	}
-
 	result := make([]string, 0, len(lines)-(to.Line-from.Line+1)+len(replacement))
 	result = append(result, lines[:from.Line]...)
 	result = append(result, replacement...)
@@ -152,10 +185,6 @@ func (s *Server) HandleEdit(senderCid string, msg EditMessage) {
 		return
 	}
 
-	// Always snapshot the version about to be superseded so a racing client citing
-	// it as CurrentVersionId can still find something to resolve against.
-	s.hub.Versions.Add(f.id, f.versionId, f.content)
-
 	if msg.CurrentVersionId == f.versionId {
 		s.applyHappyPathEditLocked(senderCid, msg, f)
 		return
@@ -163,16 +192,12 @@ func (s *Server) HandleEdit(senderCid string, msg EditMessage) {
 	s.applyConflictEditLocked(senderCid, msg, f)
 }
 
-// commitLocked sets f's content/version and writes it straight to disk.
-func (s *Server) commitLocked(f *openFile, content, versionId string) bool {
-	if err := os.WriteFile(s.abs(f.path), []byte(content), 0644); err != nil {
-		log.Printf("[edit] disk write error: %v", err)
-		return false
-	}
+// commitLocked sets f's content/version and schedules a write-behind to disk.
+func (s *Server) commitLocked(f *openFile, content, versionId string) {
 	f.content = content
 	f.versionId = versionId
 	s.hub.Versions.Add(f.id, versionId, content)
-	return true
+	s.markDirtyLocked(f)
 }
 
 func (s *Server) applyHappyPathEditLocked(senderCid string, msg EditMessage, f *openFile) {
@@ -180,12 +205,11 @@ func (s *Server) applyHappyPathEditLocked(senderCid string, msg EditMessage, f *
 	newLines, ok := replaceRange(lines, msg.From, msg.To, msg.Text)
 	if !ok {
 		log.Printf("[edit] out-of-range edit fileId=%s from=%+v to=%+v", msg.FileId, msg.From, msg.To)
+		s.hub.SendEditConflict(senderCid, f.id, f.content, f.versionId)
 		return
 	}
 	newContent := strings.Join(newLines, "\n")
-	if !s.commitLocked(f, newContent, msg.NewVersionId) {
-		return
-	}
+	s.commitLocked(f, newContent, msg.NewVersionId)
 	s.hub.BroadcastContent(f.id, newContent, msg.NewVersionId, senderCid)
 }
 
@@ -217,9 +241,7 @@ func (s *Server) applyConflictEditLocked(senderCid string, msg EditMessage, f *o
 	}
 
 	freshVersionId := uniqueId(5)
-	if !s.commitLocked(f, merged, freshVersionId) {
-		return
-	}
+	s.commitLocked(f, merged, freshVersionId)
 	// Also cache the sender's naive (non-merged) result under its own NewVersionId,
 	// since that's what the client's local editor actually contains and its next
 	// chained edit will cite this as CurrentVersionId.
@@ -230,7 +252,8 @@ func (s *Server) applyConflictEditLocked(senderCid string, msg EditMessage, f *o
 // syncFromDiskLocked folds an external change to f's file into the same
 // versioned stream as a client edit, then broadcasts it to all subscribers.
 func (s *Server) syncFromDiskLocked(f *openFile) {
-	if !f.loaded {
+	// While our copy is ahead of disk (or being written), disk is stale or partial.
+	if !f.loaded || f.dirty || f.flushing.Load() > 0 {
 		return
 	}
 	b, err := os.ReadFile(s.abs(f.path))
@@ -241,7 +264,6 @@ func (s *Server) syncFromDiskLocked(f *openFile) {
 	if content == f.content {
 		return // our own write echoing back, or a no-op touch
 	}
-	s.hub.Versions.Add(f.id, f.versionId, f.content)
 	f.content = content
 	f.versionId = uniqueId(5)
 	s.hub.Versions.Add(f.id, f.versionId, content)

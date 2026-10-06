@@ -4,6 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 )
 
 // openFile is the in-memory identity of a file with a tab. FileIds live only as
@@ -14,6 +17,14 @@ type openFile struct {
 	loaded    bool   // content/versionId are valid
 	content   string
 	versionId string
+
+	// write-behind state: dirty/dirtySince/flushTimer are guarded by Server.mu;
+	// writeMu serializes disk writes; flushing > 0 while a write is in flight.
+	dirty      bool
+	dirtySince time.Time
+	flushTimer *time.Timer
+	writeMu    sync.Mutex
+	flushing   atomic.Int32
 }
 
 type TabInfo struct {
@@ -95,6 +106,9 @@ func (s *Server) closeTabLocked(id string) int {
 	if idx >= 0 {
 		s.tabs = append(s.tabs[:idx], s.tabs[idx+1:]...)
 	}
+	if f.flushTimer != nil {
+		f.flushTimer.Stop()
+	}
 	delete(s.byId, id)
 	delete(s.byPath, f.path)
 	s.hub.Versions.Forget(id)
@@ -122,6 +136,10 @@ func (s *Server) maybeUnloadLocked(id string) {
 	}
 	if s.hub.HasSubscribers(id) {
 		return
+	}
+	s.flushLocked(f)
+	if f.dirty {
+		return // write failed; keep the only copy
 	}
 	f.loaded = false
 	f.content = ""

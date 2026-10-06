@@ -206,6 +206,11 @@ watch([() => store.activeFileId, activeKind], ([fileId, kind]) => {
   }
 })
 
+// no edits while disconnected: they'd never reach the server
+watch(() => store.wsConnected, (connected) => {
+  cm?.setOption('readOnly', connected ? false : 'nocursor')
+})
+
 // apply word wrap toggle
 watch(() => store.wordWrap, (wrap) => {
   cm?.setOption('lineWrapping', wrap)

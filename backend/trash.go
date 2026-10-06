@@ -43,6 +43,9 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", 404)
 		return
 	}
+	for _, f := range s.tabsUnderLocked(body.Path) {
+		s.flushLocked(f)
+	}
 	item := &trashItem{id: uniqueId(12), origRel: body.Path, base: path.Base(body.Path)}
 	item.trashAbs = filepath.Join(s.rootAbs, trashDirName, item.id)
 	if err := os.MkdirAll(item.trashAbs, 0755); err != nil {
@@ -65,9 +68,12 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	s.trash[item.id] = item
 	item.timer = time.AfterFunc(trashTTL, func() {
 		s.mu.Lock()
-		defer s.mu.Unlock()
-		if s.trash[item.id] == item {
+		expired := s.trash[item.id] == item
+		if expired {
 			delete(s.trash, item.id)
+		}
+		s.mu.Unlock()
+		if expired {
 			os.RemoveAll(item.trashAbs)
 		}
 	})

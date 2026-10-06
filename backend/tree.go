@@ -89,18 +89,30 @@ func sortTree(n *FolderNode) {
 	}
 }
 
-// scheduleTree debounces a rebuild + broadcast of the file tree.
+const (
+	treeDebounce = 50 * time.Millisecond
+	treeMaxWait  = time.Second
+)
+
+// scheduleTree debounces a rebuild + broadcast of the file tree. Events keep
+// pushing the rebuild back, but never by more than treeMaxWait in total, so a
+// continuous stream of changes can't starve updates.
 func (s *Server) scheduleTree() {
 	s.treeMu.Lock()
 	defer s.treeMu.Unlock()
-	if s.treeTimer != nil {
-		s.treeTimer.Reset(50 * time.Millisecond)
+	now := time.Now()
+	if s.treeTimer == nil {
+		s.treeFirst = now
+		s.treeTimer = time.AfterFunc(treeDebounce, s.rebuildTree)
 		return
 	}
-	s.treeTimer = time.AfterFunc(50*time.Millisecond, func() {
-		s.treeMu.Lock()
-		s.treeTimer = nil
-		s.treeMu.Unlock()
-		s.hub.BroadcastFS(*BuildTree(s.rootAbs), "tree changed")
-	})
+	d := min(treeDebounce, max(treeMaxWait-now.Sub(s.treeFirst), 0))
+	s.treeTimer.Reset(d)
+}
+
+func (s *Server) rebuildTree() {
+	s.treeMu.Lock()
+	s.treeTimer = nil
+	s.treeMu.Unlock()
+	s.hub.BroadcastFS(BuildTree(s.rootAbs))
 }

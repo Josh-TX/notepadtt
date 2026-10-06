@@ -65,6 +65,9 @@ func (s *Server) handleCloseTab(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if f := s.byId[id]; f != nil {
+		s.flushLocked(f)
+	}
 	if s.closeTabLocked(id) >= 0 {
 		s.broadcastTabsLocked()
 	}
@@ -185,6 +188,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	abs := s.abs(rel)
+	s.flushPath(rel)
 	info, err := os.Stat(abs)
 	if err != nil || info.IsDir() {
 		http.NotFound(w, r)
@@ -278,6 +282,7 @@ func (s *Server) handleDuplicate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid path", 400)
 		return
 	}
+	s.flushPath(body.Path)
 	src, err := os.Open(s.abs(body.Path))
 	if err != nil {
 		http.NotFound(w, r)
@@ -363,6 +368,9 @@ func (s *Server) renamePath(w http.ResponseWriter, oldRel, newRel string) {
 	if _, err := os.Lstat(s.abs(newRel)); err == nil {
 		http.Error(w, "already exists", 409)
 		return
+	}
+	for _, f := range s.tabsUnderLocked(oldRel) {
+		s.flushLocked(f)
 	}
 	if err := os.Rename(s.abs(oldRel), s.abs(newRel)); err != nil {
 		http.Error(w, err.Error(), 500)

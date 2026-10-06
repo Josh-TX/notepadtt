@@ -5,15 +5,32 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"strings"
+	"net/url"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+const (
+	writeWait    = 10 * time.Second
+	pongWait     = 60 * time.Second
+	pingInterval = 30 * time.Second
+	maxReadBytes = 16 << 20
+)
+
+var upgrader = websocket.Upgrader{CheckOrigin: sameOrigin}
+
+// sameOrigin allows requests with no Origin header (non-browser clients) or whose
+// Origin host matches the Host the request was sent to. This blocks other web
+// pages from driving the server through a visitor's browser.
+func sameOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	return err == nil && u.Host == r.Host
 }
 
 type Hub struct {
@@ -21,11 +38,8 @@ type Hub struct {
 	clients       map[string]*wsClient
 	subscriptions map[string]string // cid -> fileId
 
-	treeMu          sync.Mutex
-	treeTimer       *time.Timer
-	pendingTreeJSON []byte
-	pendingReasons  []string
-	lastTreeJSON    []byte
+	treeMu       sync.Mutex
+	lastTreeJSON []byte
 
 	Versions *RecentVersionStore
 
@@ -39,9 +53,34 @@ type Hub struct {
 }
 
 type wsClient struct {
-	cid  string
-	conn *websocket.Conn
-	send chan []byte
+	cid       string
+	conn      *websocket.Conn
+	send      chan []byte
+	done      chan struct{} // closed when the connection is torn down
+	closeOnce sync.Once
+}
+
+// close tears the connection down; the pumps exit and readPump unregisters it.
+func (c *wsClient) close() {
+	c.closeOnce.Do(func() {
+		if c.done != nil {
+			close(c.done)
+		}
+		if c.conn != nil {
+			c.conn.Close()
+		}
+	})
+}
+
+// enqueue queues msg for c. A client whose buffer is full has missed messages it
+// can't recover from, so it is disconnected; its reconnect refetches everything.
+func (c *wsClient) enqueue(msg []byte) {
+	select {
+	case c.send <- msg:
+	default:
+		log.Printf("ws: send buffer full for cid %s, disconnecting", c.cid)
+		c.close()
+	}
 }
 
 func NewHub() *Hub {
@@ -58,7 +97,7 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cid := uniqueId(16)
-	c := &wsClient{cid: cid, conn: conn, send: make(chan []byte, 64)}
+	c := &wsClient{cid: cid, conn: conn, send: make(chan []byte, 64), done: make(chan struct{})}
 
 	h.mu.Lock()
 	h.clients[cid] = c
@@ -79,11 +118,17 @@ func (h *Hub) readPump(c *wsClient) {
 		old := h.subscriptions[c.cid]
 		delete(h.subscriptions, c.cid)
 		h.mu.Unlock()
-		c.conn.Close()
+		c.close()
 		if old != "" && h.OnUnsubscribe != nil {
 			h.OnUnsubscribe(old)
 		}
 	}()
+	c.conn.SetReadLimit(maxReadBytes)
+	c.conn.SetReadDeadline(time.Now().Add(pongWait))
+	c.conn.SetPongHandler(func(string) error {
+		c.conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
 	for {
 		_, raw, err := c.conn.ReadMessage()
 		if err != nil {
@@ -109,9 +154,24 @@ func (h *Hub) readPump(c *wsClient) {
 }
 
 func (c *wsClient) writePump() {
-	defer c.conn.Close()
-	for msg := range c.send {
-		if err := c.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+	ticker := time.NewTicker(pingInterval)
+	defer func() {
+		ticker.Stop()
+		c.close()
+	}()
+	for {
+		select {
+		case msg := <-c.send:
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := c.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+				return
+			}
+		case <-ticker.C:
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
+		case <-c.done:
 			return
 		}
 	}
@@ -155,51 +215,29 @@ func (h *Hub) Broadcast(v any) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	for _, c := range h.clients {
-		select {
-		case c.send <- msg:
-		default:
-			log.Printf("ws: send buffer full for cid %s", c.cid)
-		}
+		c.enqueue(msg)
 	}
 }
 
-func (h *Hub) BroadcastFS(tree FolderNode, reason string) {
+// BroadcastFS sends the tree to every connection unless it is unchanged since the
+// last broadcast. Debouncing is the caller's job (Server.scheduleTree).
+func (h *Hub) BroadcastFS(tree *FolderNode) {
 	treeJSON, err := json.Marshal(tree)
 	if err != nil {
 		return
 	}
 	h.treeMu.Lock()
-	h.pendingTreeJSON = treeJSON
-	h.pendingReasons = append(h.pendingReasons, reason)
-	if h.treeTimer != nil {
-		h.treeTimer.Reset(50 * time.Millisecond)
-	} else {
-		h.treeTimer = time.AfterFunc(50*time.Millisecond, h.flushTree)
-	}
-	h.treeMu.Unlock()
-}
-
-func (h *Hub) flushTree() {
-	h.treeMu.Lock()
-	treeJSON := h.pendingTreeJSON
-	reason := strings.Join(h.pendingReasons, " | ")
-	h.pendingTreeJSON = nil
-	h.pendingReasons = nil
-	h.treeTimer = nil
 	same := bytes.Equal(treeJSON, h.lastTreeJSON)
 	if !same {
 		h.lastTreeJSON = treeJSON
 	}
 	h.treeMu.Unlock()
-
 	if same {
 		return
 	}
-
-	msg, err := json.Marshal(map[string]interface{}{
-		"_reason": reason,
-		"type":    "filesystem",
-		"tree":    json.RawMessage(treeJSON),
+	msg, err := json.Marshal(map[string]any{
+		"type": "filesystem",
+		"tree": json.RawMessage(treeJSON),
 	})
 	if err != nil {
 		return
@@ -207,11 +245,7 @@ func (h *Hub) flushTree() {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	for _, c := range h.clients {
-		select {
-		case c.send <- msg:
-		default:
-			log.Printf("ws: send buffer full for cid %s", c.cid)
-		}
+		c.enqueue(msg)
 	}
 }
 
@@ -223,10 +257,7 @@ func (h *Hub) SendTo(cid string, msg []byte) {
 	if !ok {
 		return
 	}
-	select {
-	case c.send <- msg:
-	default:
-	}
+	c.enqueue(msg)
 }
 
 // SendEditConflict notifies a single sender that its edit was rejected, carrying the
@@ -261,10 +292,7 @@ func (h *Hub) BroadcastContent(fileId, content, versionId, senderCid string) {
 			continue
 		}
 		if h.subscriptions[cid] == fileId {
-			select {
-			case c.send <- msg:
-			default:
-			}
+			c.enqueue(msg)
 		}
 	}
 }

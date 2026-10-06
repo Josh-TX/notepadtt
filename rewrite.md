@@ -18,8 +18,8 @@ Drastic simplification: stateless server, filesystem is the only persistent stor
 
 ## Identity & sync
 - FileId kept: in-memory map, assigned on open, survives renames while server runs. Path is an attribute.
-- VersionId + RecentFileVersions kept, in-memory only (5s purge, no FileVersioning step). Conflict merge unchanged.
-- Server writes to disk on every edit message, immediately. No save button, no dirty state.
+- VersionId + RecentFileVersions kept, in-memory only (last 16 per file, no FileVersioning step). Conflict merge unchanged.
+- Server applies edits in memory and writes behind (200ms idle, 1s max wait, outside the global lock); flushes before path-changing ops and on shutdown. Crash loses ≤1s. No save button.
 - fs watcher on open files: external changes go through the same merge path as another client's edit. Watcher must ignore server's own writes (compare content/hash vs last written).
 - Tree watcher: recursive over root (minus exclusions), pushes tree changes live to all clients.
 - File deleted externally while open: tab closes in all clients, silently. (External rename = same, tab closes.)

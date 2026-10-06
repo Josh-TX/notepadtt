@@ -77,3 +77,19 @@ func TestBuildLineMapping(t *testing.T) {
 		}
 	}
 }
+
+// CodeMirror 5 counts Ch in UTF-16 units, so an emoji is 2.
+func TestUTF16Positions(t *testing.T) {
+	lines := []string{"a😀b"}
+	got, ok := replaceRange(lines, Pos{0, 3}, Pos{0, 3}, []string{"X"})
+	if !ok || !slices.Equal(got, []string{"a😀Xb"}) {
+		t.Fatalf("got %v, %v", got, ok)
+	}
+	rem, ok := extractRange(lines, Pos{0, 1}, Pos{0, 3})
+	if !ok || !slices.Equal(rem, []string{"😀"}) {
+		t.Fatalf("got %v, %v", rem, ok)
+	}
+	if _, ok := replaceRange(lines, Pos{0, 5}, Pos{0, 5}, []string{"X"}); ok {
+		t.Fatal("ch 5 is past the end (len 4)")
+	}
+}

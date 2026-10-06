@@ -5,11 +5,12 @@ A simple notepad app inspired by notepad++. Notes are auto-saved and synchronize
 ## Usage
 
 ```
-notepadtt [-d|-directory <path>] [-p|-port <port>]
+notepadtt [-d|-directory <path>] [-p|-port <port>] [-host <addr>]
 ```
 
 - `-d`, `-directory`: root directory to serve (default `.`)
 - `-p`, `-port`: port to listen on (default `8080`)
+- `-host`: address to listen on (default all interfaces, so LAN devices can connect; use `127.0.0.1` to restrict). There is no authentication.
 
 
 ## Notes

@@ -35,6 +35,7 @@ type Server struct {
 
 	treeMu    sync.Mutex
 	treeTimer *time.Timer
+	treeFirst time.Time
 }
 
 func NewServer(root string, frontend embed.FS) (*Server, error) {
@@ -68,6 +69,12 @@ func NewServer(root string, frontend embed.FS) (*Server, error) {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// CSRF guard: state-changing requests from a browser page on another origin
+	// carry a mismatching Origin header.
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && !sameOrigin(r) {
+		http.Error(w, "cross-origin request refused", http.StatusForbidden)
+		return
+	}
 	s.mux.ServeHTTP(w, r)
 }
 

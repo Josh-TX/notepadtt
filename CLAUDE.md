@@ -4,7 +4,7 @@ See GLOSSARY.md for details. The app is a stateless server over a directory on d
 
 **FileId**: in-memory id assigned to a file when it gets a tab; stable across renames; all edit/WS/tab logic uses it
 **VersionId**: id of a file's current in-memory content; included in content reads/writes/broadcasts; drives concurrent-edit conflict detection
-**RecentFileVersions**: In-memory cache of recent content snapshots per file; used for conflict resolution; entries purged after 5s
+**RecentFileVersions**: In-memory cache of recent content snapshots per file; used for conflict resolution; last 16 versions (≤8MB) kept per file
 **Tab list**: Open files, in server memory, shared live across clients; empty at start; the active tab is per client
 **Data root**: Directory served; `.git`, `node_modules`, `.ntt-trash` are invisible everywhere
 **Trash**: `.ntt-trash` in the data root; deleted entries live there 5s for UNDO; wiped at startup

@@ -4,7 +4,7 @@
 
 **VersionId** — 5-char alphanumeric id of a file's current in-memory content. Minted when content is loaded, on every client edit (client-chosen `newVersionId`), conflict merge, and external disk change. Included in content reads, `content` broadcasts and `editConflict` messages; the server compares an edit's `currentVersionId` to detect concurrent edits.
 
-**RecentFileVersions** — in-memory `(fileId, versionId) -> content` snapshots, purged after 5s. Used to relocate an edit made against an older version onto the latest content (line diff). The sender's naive (non-merged) result is stored under its own `newVersionId` so its next chained edit still resolves.
+**RecentFileVersions** — in-memory `(fileId, versionId) -> content` snapshots, last 16 per file (≤8MB), dropped when the tab closes. Used to relocate an edit made against an older version onto the latest content (line diff). The sender's naive (non-merged) result is stored under its own `newVersionId` so its next chained edit still resolves.
 
 **Open file registry** — server-side maps `fileId <-> path` plus loaded content. Entries exist only for tabs (and for trashed tabs awaiting UNDO). Content is loaded when a client fetches the file; large files are unloaded once no client is subscribed.
 
@@ -14,7 +14,7 @@
 
 **Data root** — directory served (`-d`). Everything is confined to it. `.git`, `node_modules` and `.ntt-trash` are treated as nonexistent.
 
-**Disk sync** — the server writes every edit straight to disk (no save button, no dirty state). An fs watcher (whole root, recursive, follows dir symlinks) feeds external changes to open files through the same versioned stream as client edits (own writes are ignored by content comparison) and pushes tree updates. A file deleted/renamed externally closes its tab.
+**Disk sync** — edits apply in memory and are written behind to disk (200ms idle / 1s max; flushed before rename/delete/duplicate/download/tab close/shutdown). No save button. While a file is dirty or mid-write, watcher events for it are ignored. An fs watcher (whole root, recursive, follows dir symlinks) feeds external changes to open files through the same versioned stream as client edits (own writes are ignored by content comparison) and pushes tree updates. A file deleted/renamed externally closes its tab.
 
 **New file** — `new N` (no extension), lowest unused N on disk. The TabBar "+" creates in the data root; a tree folder's context menu creates in that folder. New files are opened as a tab.
 

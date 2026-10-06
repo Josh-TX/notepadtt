@@ -157,6 +157,7 @@ func TestEditHappyPathWritesToDisk(t *testing.T) {
 		FileId: a.FileId, CurrentVersionId: f1.VersionId, NewVersionId: "v2",
 		From: Pos{0, 5}, To: Pos{0, 5}, Text: []string{"!"}, Removed: []string{""},
 	})
+	s.FlushAll()
 	b, _ := os.ReadFile(s.abs("a.txt"))
 	if string(b) != "hello!\nworld" {
 		t.Fatalf("disk = %q", b)
@@ -188,6 +189,7 @@ func TestEditConflictRelocation(t *testing.T) {
 		FileId: a.FileId, CurrentVersionId: f.VersionId, NewVersionId: "v3",
 		From: Pos{2, 1}, To: Pos{2, 1}, Text: []string{"!"}, Removed: []string{""},
 	})
+	s.FlushAll()
 	b, _ := os.ReadFile(s.abs("a.txt"))
 	if string(b) != "X\na\nb\nc!" {
 		t.Fatalf("disk = %q", b)
@@ -208,6 +210,7 @@ func TestExternalChangeSyncsAndEchoIsIgnored(t *testing.T) {
 		From: Pos{0, 3}, To: Pos{0, 3}, Text: []string{"!"}, Removed: []string{""},
 	})
 	drain(ch)
+	s.FlushAll()
 	s.syncOpenPath("a.txt")
 	if msgs := drain(ch); len(msgs) != 0 {
 		t.Fatalf("echo of own write should be ignored, got %v", msgs)
@@ -459,5 +462,94 @@ func TestReorderTabsAndActive(t *testing.T) {
 	}](t, do(t, s, "GET", "/api/tabs", nil))
 	if got.Tabs[0].FileId != b.FileId || got.ActiveFileId != a.FileId {
 		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestWriteBehindFlushesAfterDelay(t *testing.T) {
+	s := newTestServer(t)
+	writeFile(t, s, "a.txt", "x")
+	a := openTab(t, s, "a.txt")
+	f := getFile(t, s, a.FileId, "")
+	s.HandleEdit("c1", EditMessage{
+		FileId: a.FileId, CurrentVersionId: f.VersionId, NewVersionId: "v2",
+		From: Pos{0, 1}, To: Pos{0, 1}, Text: []string{"y"}, Removed: []string{""},
+	})
+	if b, _ := os.ReadFile(s.abs("a.txt")); string(b) != "x" {
+		t.Fatalf("should not be written yet, got %q", b)
+	}
+	time.Sleep(flushDelay + 300*time.Millisecond)
+	if b, _ := os.ReadFile(s.abs("a.txt")); string(b) != "xy" {
+		t.Fatalf("disk = %q after delay", b)
+	}
+}
+
+func TestRenameFlushesPendingEdit(t *testing.T) {
+	s := newTestServer(t)
+	writeFile(t, s, "a.txt", "x")
+	a := openTab(t, s, "a.txt")
+	f := getFile(t, s, a.FileId, "")
+	s.HandleEdit("c1", EditMessage{
+		FileId: a.FileId, CurrentVersionId: f.VersionId, NewVersionId: "v2",
+		From: Pos{0, 1}, To: Pos{0, 1}, Text: []string{"y"}, Removed: []string{""},
+	})
+	do(t, s, "PUT", "/api/rename", map[string]string{"path": "a.txt", "name": "b.txt"})
+	time.Sleep(flushDelay + 300*time.Millisecond)
+	if b, _ := os.ReadFile(s.abs("b.txt")); string(b) != "xy" {
+		t.Fatalf("b.txt = %q", b)
+	}
+	if _, err := os.Stat(s.abs("a.txt")); err == nil {
+		t.Fatalf("a.txt was recreated by a late flush")
+	}
+}
+
+func TestOutOfRangeEditSendsConflict(t *testing.T) {
+	s := newTestServer(t)
+	writeFile(t, s, "a.txt", "x")
+	ch := registerClient(s, "c1")
+	a := openTab(t, s, "a.txt")
+	f := getFile(t, s, a.FileId, "?cid=c1")
+	drain(ch)
+	s.HandleEdit("c1", EditMessage{
+		FileId: a.FileId, CurrentVersionId: f.VersionId, NewVersionId: "v2",
+		From: Pos{9, 0}, To: Pos{9, 0}, Text: []string{"y"}, Removed: []string{""},
+	})
+	msgs := drain(ch)
+	if len(msgs) != 1 || msgs[0]["type"] != "editConflict" {
+		t.Fatalf("got %v", msgs)
+	}
+}
+
+func TestCrossOriginMutationRefused(t *testing.T) {
+	s := newTestServer(t)
+	req := httptest.NewRequest("POST", "/api/folders", strings.NewReader(`{"name":"x"}`))
+	req.Header.Set("Origin", "http://evil.example")
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+	if rec.Code != 403 {
+		t.Fatalf("got %d", rec.Code)
+	}
+	req = httptest.NewRequest("POST", "/api/folders", strings.NewReader(`{"name":"x"}`))
+	req.Header.Set("Origin", "http://"+req.Host)
+	rec = httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+	if rec.Code != 204 {
+		t.Fatalf("same-origin got %d", rec.Code)
+	}
+}
+
+func TestVersionStoreBoundedPerFile(t *testing.T) {
+	st := newRecentVersionStore()
+	for i := 0; i < versionsPerFile+10; i++ {
+		st.Add("f", string(rune('a'+i)), "c")
+	}
+	if _, ok := st.Lookup("f", "a"); ok {
+		t.Fatal("oldest should be evicted")
+	}
+	if _, ok := st.Lookup("f", string(rune('a'+versionsPerFile+9))); !ok {
+		t.Fatal("newest should be kept")
+	}
+	st.Forget("f")
+	if _, ok := st.Lookup("f", string(rune('a'+versionsPerFile+9))); ok {
+		t.Fatal("forget failed")
 	}
 }

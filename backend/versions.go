@@ -1,48 +1,61 @@
 package backend
 
-import (
-	"sync"
-	"time"
+import "sync"
+
+const (
+	versionsPerFile = 16
+	versionsMaxSize = 8 << 20 // bytes per file; the newest 2 are always kept
 )
 
 type recentVersion struct {
-	fileId    string
 	versionId string
 	content   string
-	addedAt   time.Time
 }
 
-// RecentVersionStore holds recent content snapshots keyed by (fileId, versionId).
-// Used to retrieve the "old" content a client was working from during conflict
-// resolution. Entries expire after 5 seconds; a ticker purges them.
+// RecentVersionStore holds the last few content snapshots per file, keyed by
+// (fileId, versionId). Used to retrieve the "old" content a client was working
+// from during conflict resolution. Bounded by count and size per file, not time.
 type RecentVersionStore struct {
-	mu      sync.Mutex
-	entries []recentVersion
+	mu    sync.Mutex
+	files map[string][]recentVersion // oldest first
 }
 
 func newRecentVersionStore() *RecentVersionStore {
-	s := &RecentVersionStore{}
-	go func() {
-		for range time.Tick(time.Second) {
-			s.cleanup()
-		}
-	}()
-	return s
+	return &RecentVersionStore{files: map[string][]recentVersion{}}
 }
 
 func (s *RecentVersionStore) Add(fileId, versionId, content string) {
 	s.mu.Lock()
-	s.entries = append(s.entries, recentVersion{fileId, versionId, content, time.Now()})
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+	list := s.files[fileId]
+	for i, e := range list {
+		if e.versionId == versionId {
+			list = append(list[:i], list[i+1:]...)
+			break
+		}
+	}
+	list = append(list, recentVersion{versionId, content})
+	size := 0
+	for _, e := range list {
+		size += len(e.content)
+	}
+	drop := 0
+	for drop < len(list)-2 && (len(list)-drop > versionsPerFile || size > versionsMaxSize) {
+		size -= len(list[drop].content)
+		drop++
+	}
+	if drop > 0 {
+		list = append(list[:0], list[drop:]...)
+	}
+	s.files[fileId] = list
 }
 
-// Lookup returns the content for (fileId, versionId) if it exists and is not expired.
+// Lookup returns the content for (fileId, versionId) if it is still retained.
 func (s *RecentVersionStore) Lookup(fileId, versionId string) (string, bool) {
-	cutoff := time.Now().Add(-5 * time.Second)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, e := range s.entries {
-		if e.fileId == fileId && e.versionId == versionId && e.addedAt.After(cutoff) {
+	for _, e := range s.files[fileId] {
+		if e.versionId == versionId {
 			return e.content, true
 		}
 	}
@@ -52,27 +65,6 @@ func (s *RecentVersionStore) Lookup(fileId, versionId string) (string, bool) {
 // Forget drops all entries for a file (used when its tab closes).
 func (s *RecentVersionStore) Forget(fileId string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	n := 0
-	for _, e := range s.entries {
-		if e.fileId != fileId {
-			s.entries[n] = e
-			n++
-		}
-	}
-	s.entries = s.entries[:n]
-}
-
-func (s *RecentVersionStore) cleanup() {
-	cutoff := time.Now().Add(-5 * time.Second)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	n := 0
-	for _, e := range s.entries {
-		if e.addedAt.After(cutoff) {
-			s.entries[n] = e
-			n++
-		}
-	}
-	s.entries = s.entries[:n]
+	delete(s.files, fileId)
+	s.mu.Unlock()
 }
