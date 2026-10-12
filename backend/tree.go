@@ -13,6 +13,7 @@ type FileNode struct {
 	Name   string `json:"name"`
 	Path   string `json:"path"`
 	IsLink bool   `json:"isLink"`
+	Size   int64  `json:"size"`
 }
 
 type FolderNode struct {
@@ -53,7 +54,11 @@ func BuildTree(rootAbs string) *FolderNode {
 		if parent == nil {
 			return nil
 		}
-		parent.Files = append(parent.Files, &FileNode{Name: path.Base(rel), Path: rel, IsLink: isSymlink(file)})
+		var size int64
+		if info, err := os.Stat(file); err == nil {
+			size = info.Size()
+		}
+		parent.Files = append(parent.Files, &FileNode{Name: path.Base(rel), Path: rel, IsLink: isSymlink(file), Size: size})
 		return nil
 	})
 	sortTree(root)

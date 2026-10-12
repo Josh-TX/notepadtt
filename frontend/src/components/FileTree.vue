@@ -65,6 +65,7 @@
         @dragend="onItemDragEnd"
       >
         <span class="tree-label">{{ file.name }}<span v-if="file.isLink" class="link-indicator" title="Symlink">🔗</span></span>
+        <span class="file-size">{{ formatSize(file.size) }}</span>
       </div>
     </li>
     </ul>
@@ -83,6 +84,16 @@ defineProps({
   menuFolderPath: String,
 })
 defineEmits(['toggle', 'open-file', 'folder-menu', 'file-menu'])
+
+// Up to 3 significant digits + unit, e.g. "123 B", "1.23 KB", "12.3 MB"
+function formatSize(bytes) {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let n = bytes ?? 0
+  let i = 0
+  while (n >= 1000 && i < units.length - 1) { n /= 1024; i++ }
+  if (i === 0) return `${n} B`
+  return `${Number(n.toPrecision(3))} ${units[i]}`
+}
 
 const activePath = computed(() => store.tabs.find(t => t.fileId === store.activeFileId)?.path ?? null)
 const dragItem = computed(() => store.dragItem)
@@ -142,5 +153,7 @@ function onItemDragEnd() {
 .file-row { padding-left: 8px; margin-left: 10px; }
 .tree-icon { color: #aaa; width: 14px; flex-shrink: 0; display: flex; align-items: center; }
 .tree-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-size { flex-shrink: 0; margin-left: 8px; font-size: 11px; color: #777; }
+.tree-row.active .file-size { color: #9bb8cf; }
 .link-indicator { flex-shrink: 0; font-size: 13px; opacity: 0.8; margin-left: 3px; }
 </style>
