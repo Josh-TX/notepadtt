@@ -40,6 +40,8 @@ const state = reactive({
   searchIncludeRegex: false,
   pendingScrollLine: null,  // 1-based line to scroll to after next active file load
   pendingHighlightTerms: null,
+  renamingPath: null,       // path of the file being renamed inline in the tree
+  renamingTabId: null,      // fileId of the tab being renamed inline
   moveModalOpen: false,
   moveModalItem: null,      // { type: 'file'|'folder', path, name }
 })

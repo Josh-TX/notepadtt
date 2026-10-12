@@ -355,6 +355,7 @@ const folderMenuItems = computed(() => {
 const fileMenuItems = computed(() => {
   const file = menuFile.value
   return [
+    { label: 'Rename', action: () => { store.renamingPath = file.path } },
     { label: 'Move', action: () => openMoveModal({ type: 'file', path: file.path, name: file.name }) },
     { label: 'Copy', action: () => openMoveModal({ type: 'file', mode: 'copy', path: file.path, name: file.name }) },
     { label: 'Delete', action: () => deleteWithUndo(file.path, file.name) },

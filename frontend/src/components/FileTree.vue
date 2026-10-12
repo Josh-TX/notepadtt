@@ -58,13 +58,24 @@
         class="tree-row file-row"
         :class="{ active: activePath === file.path, 'menu-open': menuFilePath === file.path, dragging: dragItem?.type === 'file' && dragItem.path === file.path }"
         :data-parent-path="node.path ?? ''"
-        :draggable="dragEnabled"
-        @click="$emit('open-file', file)"
+        :draggable="dragEnabled && store.renamingPath !== file.path"
+        @click="store.renamingPath !== file.path && $emit('open-file', file)"
         @contextmenu.prevent="$emit('file-menu', $event, file)"
         @dragstart="onFileDragStart($event, file)"
         @dragend="onItemDragEnd"
       >
-        <span class="tree-label">{{ file.name }}<span v-if="file.isLink" class="link-indicator" title="Symlink">🔗</span></span>
+        <input
+          v-if="store.renamingPath === file.path"
+          class="rename-input"
+          :value="file.name"
+          spellcheck="false"
+          @vue:mounted="({ el }) => { el.focus(); el.select() }"
+          @click.stop
+          @keydown.enter.prevent="commitRename($event, file)"
+          @keydown.esc.prevent="cancelRename"
+          @blur="commitRename($event, file)"
+        />
+        <span v-else class="tree-label">{{ file.name }}<span v-if="file.isLink" class="link-indicator" title="Symlink">🔗</span></span>
         <span class="file-size">{{ formatSize(file.size) }}</span>
       </div>
     </li>
@@ -74,7 +85,8 @@
 
 <script setup>
 import { computed, ref, onMounted } from 'vue'
-import { store, folderOfPath } from '../store.js'
+import { store, folderOfPath, showToast } from '../store.js'
+import { move } from '../api.js'
 
 defineProps({
   node: Object,
@@ -123,6 +135,22 @@ function onFileDragStart(e, file) {
   e.dataTransfer.effectAllowed = 'move'
 }
 
+function cancelRename() { store.renamingPath = null }
+
+async function commitRename(e, file) {
+  if (store.renamingPath !== file.path) return
+  store.renamingPath = null
+  const name = e.target.value.trim()
+  if (!name || name === file.name) return
+  if (name.includes('/')) { showToast('Name cannot contain "/"', 'error'); return }
+  const parent = folderOfPath(file.path)
+  try {
+    await move(file.path, parent ? parent + '/' + name : name)
+  } catch (err) {
+    showToast(err.message, 'error')
+  }
+}
+
 function onItemDragEnd() {
   store.dragItem = null
   store.dragOverPath = null
@@ -153,6 +181,7 @@ function onItemDragEnd() {
 .file-row { padding-left: 8px; margin-left: 10px; }
 .tree-icon { color: #aaa; width: 14px; flex-shrink: 0; display: flex; align-items: center; }
 .tree-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rename-input { flex: 1; min-width: 0; background: #3c3c3c; color: #fff; border: 1px solid #0078d4; outline: none; font: inherit; padding: 0 2px; }
 .file-size { flex-shrink: 0; margin-left: 8px; font-size: 11px; color: #777; }
 .tree-row.active .file-size { color: #9bb8cf; }
 .link-indicator { flex-shrink: 0; font-size: 13px; opacity: 0.8; margin-left: 3px; }

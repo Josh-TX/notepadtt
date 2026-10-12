@@ -20,13 +20,24 @@
         class="tab"
         :class="{ active: tab.fileId === store.activeFileId, dragging: isDragging && tab.fileId === dragFileId, 'menu-open': menuTab && tab.fileId === menuTab.fileId }"
         :title="tab.absPath"
-        :draggable="!isTouchDevice"
+        :draggable="!isTouchDevice && store.renamingTabId !== tab.fileId"
         @click="activateTab(tab.fileId)"
         @contextmenu.prevent="openMenu($event, tab)"
         @dragstart="onDragStart($event, tab)"
         @dragend="onDragEnd"
       >
-        <span class="tab-name">{{ tab.name }}</span>
+        <input
+          v-if="store.renamingTabId === tab.fileId"
+          class="rename-input"
+          :value="tab.name"
+          spellcheck="false"
+          @vue:mounted="({ el }) => { el.focus(); el.select() }"
+          @click.stop
+          @keydown.enter.prevent="commitRename($event, tab)"
+          @keydown.esc.prevent="store.renamingTabId = null"
+          @blur="commitRename($event, tab)"
+        />
+        <span v-else class="tab-name">{{ tab.name }}</span>
         <button class="tab-close" title="Close" @click.stop="closeTabById(tab.fileId)">✕</button>
       </div>
       <div v-if="isDragging && dropIndex !== null" class="drop-indicator" :style="indicatorStyle" />
@@ -45,8 +56,8 @@
 
 <script setup>
 import { computed, ref, watch, nextTick, onMounted } from 'vue'
-import { store, activateTab, activateNewTab, closeTabById, reorderTab, toggleSidebar, openMoveModal, deleteWithUndo, showToast } from '../store.js'
-import { createFile, downloadUrl } from '../api.js'
+import { store, activateTab, activateNewTab, closeTabById, reorderTab, toggleSidebar, openMoveModal, deleteWithUndo, showToast, folderOfPath } from '../store.js'
+import { createFile, downloadUrl, move } from '../api.js'
 import ContextMenu from './ContextMenu.vue'
 
 const scrollEl = ref(null)
@@ -82,12 +93,27 @@ const menuItems = computed(() => {
     { label: 'Close', action: () => closeTabById(tab.fileId) },
     { label: 'Close Others', action: () => closeOthers(tab) },
     { label: 'Close All', action: () => closeAll() },
-    { label: 'Move', divider: true, action: () => openMoveModal({ type: 'file', path: tab.path, name: tab.name }) },
+    { label: 'Rename', divider: true, action: () => { store.renamingTabId = tab.fileId } },
+    { label: 'Move', action: () => openMoveModal({ type: 'file', path: tab.path, name: tab.name }) },
     { label: 'Copy', action: () => openMoveModal({ type: 'file', mode: 'copy', path: tab.path, name: tab.name }) },
     { label: 'Delete', action: () => deleteWithUndo(tab.path, tab.name) },
     { label: 'Download', action: () => doDownload(tab) },
   ]
 })
+
+async function commitRename(e, tab) {
+  if (store.renamingTabId !== tab.fileId) return
+  store.renamingTabId = null
+  const name = e.target.value.trim()
+  if (!name || name === tab.name) return
+  if (name.includes('/')) { showToast('Name cannot contain "/"', 'error'); return }
+  const parent = folderOfPath(tab.path)
+  try {
+    await move(tab.path, parent ? parent + '/' + name : name)
+  } catch (err) {
+    showToast(err.message, 'error')
+  }
+}
 
 async function closeOthers(tab) {
   await activateTab(tab.fileId)
@@ -255,6 +281,7 @@ function stopAutoScroll() {
   white-space: nowrap;
   user-select: none;
 }
+.rename-input { width: 120px; background: #3c3c3c; color: #fff; border: 1px solid #0078d4; outline: none; font: inherit; padding: 0 2px; }
 .tab:hover, .tab.menu-open { background: #1e1e1e; color: #ddd; }
 .tab-name { line-height: 35px; }
 .tab-close {
