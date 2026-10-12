@@ -88,6 +88,8 @@ func (s *Server) registerRoutes(frontend embed.FS) {
 	s.mux.HandleFunc("DELETE /api/tabs/{id}", s.handleCloseTab)
 	s.mux.HandleFunc("GET /api/files/{id}", s.handleGetFile)
 	s.mux.HandleFunc("GET /api/download", s.handleDownload)
+	s.mux.HandleFunc("GET /api/backup/size", s.handleBackupSize)
+	s.mux.HandleFunc("GET /api/backup", s.handleBackup)
 
 	s.mux.HandleFunc("POST /api/files", s.handleCreateFile)
 	s.mux.HandleFunc("POST /api/folders", s.handleCreateFolder)

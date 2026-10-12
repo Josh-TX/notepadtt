@@ -35,6 +35,7 @@ const state = reactive({
   toastType: null,
   toastAction: null,        // { label, handler } rendered as a button on the toast's right edge
   searchModalOpen: false,
+  backupModalOpen: false,
   searchQuery: '',
   searchResults: [],
   searchIncludeRegex: false,
@@ -347,6 +348,8 @@ export function dismissToast() {
 
 export function openSearchModal() { state.searchModalOpen = true }
 export function closeSearchModal() { state.searchModalOpen = false }
+export function openBackupModal() { state.backupModalOpen = true }
+export function closeBackupModal() { state.backupModalOpen = false }
 export function setSearchState(query, results) {
   state.searchQuery = query
   state.searchResults = results

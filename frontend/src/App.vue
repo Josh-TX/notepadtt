@@ -17,6 +17,7 @@
     </div>
   </Transition>
   <SearchModal />
+  <BackupModal />
   <MoveFileModal />
 </template>
 
@@ -28,6 +29,7 @@ import Editor from './components/Editor.vue'
 import Footer from './components/Footer.vue'
 import Sidebar from './components/Sidebar.vue'
 import SearchModal from './components/SearchModal.vue'
+import BackupModal from './components/BackupModal.vue'
 import MoveFileModal from './components/MoveFileModal.vue'
 
 // Only override the desktop-default 400px width with the live, resizable value when in

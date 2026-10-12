@@ -37,6 +37,14 @@
         @file-menu="openFileMenu"
       />
     </div>
+    <button class="search-btn backup-btn" title="Download Zip Backup" @click="openBackupModal">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 2v8"/>
+        <polyline points="4.5,7 8,10.5 11.5,7"/>
+        <path d="M2 13h12"/>
+      </svg>
+      <span>Download Zip Backup</span>
+    </button>
     <ContextMenu
       v-if="menuFolder"
       :x="menuX"
@@ -66,7 +74,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
-import { store, closeSidebar, saveSidebarWidth, openPath, activateNewTab, openMoveModal, deleteWithUndo, showToast, openSearchModal, getFolderNode, folderOfPath } from '../store.js'
+import { store, closeSidebar, saveSidebarWidth, openPath, activateNewTab, openMoveModal, deleteWithUndo, showToast, openSearchModal, openBackupModal, getFolderNode, folderOfPath } from '../store.js'
 import { createFile, createFolder, move, downloadUrl } from '../api.js'
 import FileTree from './FileTree.vue'
 import ContextMenu from './ContextMenu.vue'
@@ -451,6 +459,7 @@ async function doDeleteFolder(folder) {
   cursor: pointer;
   text-align: left;
 }
+.backup-btn { border-bottom: none; border-top: 1px solid #2d2d2d; }
 .search-btn:hover { color: #fff; background: #2a2d2e; }
 .sidebar-scroll {
   flex: 1;

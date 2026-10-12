@@ -25,6 +25,9 @@ export function getFile(fileId, force = false) {
 
 export function downloadUrl(path) { return `/api/download?path=${encodeURIComponent(path)}` }
 
+export function backupSize() { return req('GET', '/api/backup/size') }
+export const backupUrl = '/api/backup'
+
 export function createFile(parentPath) { return req('POST', '/api/files', { parentPath }) }
 export function createFolder(parentPath, name) { return req('POST', '/api/folders', { parentPath, name }) }
 export function duplicate(path, newPath) { return req('POST', '/api/duplicate', { path, newPath }) }
