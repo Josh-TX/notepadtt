@@ -7,7 +7,7 @@ See GLOSSARY.md for details. The app is a stateless server over a directory on d
 **RecentFileVersions**: In-memory cache of recent content snapshots per file; used for conflict resolution; last 16 versions (≤8MB) kept per file
 **Tab list**: Open files, in server memory, shared live across clients; empty at start; the active tab is per client
 **Data root**: Directory served; `.git`, `node_modules`, `.ntt-trash` are invisible everywhere
-**Trash**: `.ntt-trash` in the data root; deleted entries live there 5s for UNDO; wiped at startup
+**Trash**: `.ntt-trash` in the data root; deleted entries live there 7s for UNDO; wiped at startup
 **Search**: Search Modal (Ctrl+Shift+F); server shells out to rg/grep; top 10 results. Ctrl+F is the browser's native find
 **TabBar**: The only top bar: sidebar toggle, tabs (hover = absolute path, close always visible), "+" new file
 **Sidebar**: Side panel with search button + FileTree; overlays on mobile

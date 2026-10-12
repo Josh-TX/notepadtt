@@ -45,11 +45,11 @@ Drastic simplification: stateless server, filesystem is the only persistent stor
 
 ## Delete / undo
 - Applies to files and folders (folder moves whole).
-- Server moves target to `.ntt-trash` in data root (same filesystem so rename works) for 5s, then deletes.
+- Server moves target to `.ntt-trash` in data root (same filesystem so rename works) for 7s, then deletes.
 - Tabs of deleted files close in all clients.
 - Only the deleting client sees toast with UNDO. Others just see file vanish.
-- UNDO restores file (and tabs for it, at same position). If original path now occupied: restore fails, toast "can't restore: path exists", trash copy kept until 5s expiry.
-- `.ntt-trash` wiped on server startup (crash during 5s window = permanent loss, accepted).
+- UNDO restores file (and tabs for it, at same position). If original path now occupied: restore fails, toast "can't restore: path exists", trash copy kept until 7s expiry.
+- `.ntt-trash` wiped on server startup (crash during 7s window = permanent loss, accepted).
 
 ## Search
 - Ctrl+F: browser-native find. Editor already uses CodeMirror 5 `viewportMargin: Infinity` (`Editor.vue:37`) — keep.

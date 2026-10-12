@@ -15,5 +15,5 @@ notepadtt [-d|-directory <path>] [-p|-port <port>]
 ## Notes
 
 - Workspace search (Ctrl+Shift+F) shells out to `rg` (preferred) or `grep`, so one of them must be on `PATH`.
-- Deleted files/folders sit in `<root>/.ntt-trash` for 5 seconds so they can be restored.
+- Deleted files/folders sit in `<root>/.ntt-trash` for 7 seconds so they can be restored.
 - `.git`, `node_modules` and `.ntt-trash` are hidden from the tree, watcher, and search.

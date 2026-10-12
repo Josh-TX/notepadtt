@@ -237,7 +237,7 @@ export function tabForPath(path) {
 
 // ---- deleting ----
 
-// Deletes a file/folder (server parks it in .ntt-trash for 5s) and shows an UNDO toast.
+// Deletes a file/folder (server parks it in .ntt-trash for 7s) and shows an UNDO toast.
 export async function deleteWithUndo(path, name) {
   try {
     const { trashId } = await api.deleteEntry(path)
@@ -333,7 +333,7 @@ export function showToast(msg, type = null, action = null) {
   state.toastType = type
   state.toastAction = action
   if (toastTimer) clearTimeout(toastTimer)
-  toastTimer = setTimeout(dismissToast, 4000)
+  toastTimer = setTimeout(dismissToast, 6000)
 }
 
 export function dismissToast() {

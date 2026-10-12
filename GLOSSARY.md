@@ -20,7 +20,7 @@
 
 **Large file** — over 1000 KB (`maxDisplayBytes`): the tab shows a message and a "Display anyway" button; the choice is per client. **Binary file** — NUL byte in the first 8000 bytes: message + Download button only, never editable.
 
-**Trash (`.ntt-trash`)** — deleting a file or folder moves it into `<root>/.ntt-trash/<id>/` for 5s then removes it permanently. Tabs under it close in all clients. Only the deleting client gets the toast with UNDO, which restores the entry and its tabs at their old positions (fails with "path exists" if the path was reoccupied). The folder is wiped at startup.
+**Trash (`.ntt-trash`)** — deleting a file or folder moves it into `<root>/.ntt-trash/<id>/` for 7s then removes it permanently. Tabs under it close in all clients. Only the deleting client gets the toast with UNDO, which restores the entry and its tabs at their old positions (fails with "path exists" if the path was reoccupied). The folder is wiped at startup.
 
 **Search** — Search Modal (Ctrl+Shift+F or the magnifier in the TabBar). The server shells out to `rg` (or `grep`) over the data root plus a filename match; filename matches rank first; top 10 results with 4-line snippets. Plain Ctrl+F is the browser's native find (works because the Editor uses `viewportMargin: Infinity`).
 

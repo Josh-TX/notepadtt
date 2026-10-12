@@ -13,7 +13,7 @@ import (
 
 const (
 	trashDirName    = ".ntt-trash"
-	trashTTL        = 5 * time.Second
+	trashTTL        = 7 * time.Second
 	maxDisplayBytes = 1000 * 1024
 )
 
