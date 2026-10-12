@@ -343,14 +343,14 @@ func TestStartupWipesTrashDir(t *testing.T) {
 	}
 }
 
-func TestRenameAndMoveKeepFileId(t *testing.T) {
+func TestMoveKeepsFileId(t *testing.T) {
 	s := newTestServer(t)
 	writeFile(t, s, "a.txt", "x")
 	os.MkdirAll(s.abs("sub"), 0755)
 	a := openTab(t, s, "a.txt")
 
-	if rec := do(t, s, "PUT", "/api/rename", map[string]string{"path": "a.txt", "name": "b.txt"}); rec.Code != 204 {
-		t.Fatalf("rename: %d %s", rec.Code, rec.Body.String())
+	if rec := do(t, s, "PUT", "/api/move", map[string]string{"path": "a.txt", "newPath": "b.txt"}); rec.Code != 204 {
+		t.Fatalf("move: %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := do(t, s, "PUT", "/api/move", map[string]string{"path": "b.txt", "newPath": "sub/b.txt"}); rec.Code != 204 {
 		t.Fatalf("move: %d %s", rec.Code, rec.Body.String())
@@ -359,14 +359,14 @@ func TestRenameAndMoveKeepFileId(t *testing.T) {
 		t.Fatalf("tab did not follow file: %+v", got)
 	}
 
-	// folder rename re-paths nested tabs
-	do(t, s, "PUT", "/api/rename", map[string]string{"path": "sub", "name": "sub2"})
+	// folder move re-paths nested tabs
+	do(t, s, "PUT", "/api/move", map[string]string{"path": "sub", "newPath": "sub2"})
 	if got := getFile(t, s, a.FileId, ""); got.Path != "sub2/b.txt" {
 		t.Fatalf("got %q", got.Path)
 	}
 	// conflicts and cycles are rejected
 	writeFile(t, s, "c.txt", "")
-	if rec := do(t, s, "PUT", "/api/rename", map[string]string{"path": "c.txt", "name": "sub2"}); rec.Code != 409 {
+	if rec := do(t, s, "PUT", "/api/move", map[string]string{"path": "c.txt", "newPath": "sub2"}); rec.Code != 409 {
 		t.Fatalf("want 409, got %d", rec.Code)
 	}
 	if rec := do(t, s, "PUT", "/api/move", map[string]string{"path": "sub2", "newPath": "sub2/x"}); rec.Code != 400 {
@@ -410,6 +410,18 @@ func TestDuplicateOpensTab(t *testing.T) {
 	got := decode[TabInfo](t, do(t, s, "POST", "/api/duplicate", map[string]string{"path": "a.txt"}))
 	if got.Path != "a (2).txt" {
 		t.Fatalf("got %q", got.Path)
+	}
+}
+
+func TestCopyToPath(t *testing.T) {
+	s := newTestServer(t)
+	writeFile(t, s, "a.txt", "x")
+	got := decode[TabInfo](t, do(t, s, "POST", "/api/duplicate", map[string]string{"path": "a.txt", "newPath": "sub/b.txt"}))
+	if got.Path != "sub/b.txt" {
+		t.Fatalf("got %q", got.Path)
+	}
+	if rec := do(t, s, "POST", "/api/duplicate", map[string]string{"path": "a.txt", "newPath": "sub/b.txt"}); rec.Code != 409 {
+		t.Fatalf("want 409, got %d", rec.Code)
 	}
 }
 
@@ -483,7 +495,7 @@ func TestWriteBehindFlushesAfterDelay(t *testing.T) {
 	}
 }
 
-func TestRenameFlushesPendingEdit(t *testing.T) {
+func TestMoveFlushesPendingEdit(t *testing.T) {
 	s := newTestServer(t)
 	writeFile(t, s, "a.txt", "x")
 	a := openTab(t, s, "a.txt")
@@ -492,7 +504,7 @@ func TestRenameFlushesPendingEdit(t *testing.T) {
 		FileId: a.FileId, CurrentVersionId: f.VersionId, NewVersionId: "v2",
 		From: Pos{0, 1}, To: Pos{0, 1}, Text: []string{"y"}, Removed: []string{""},
 	})
-	do(t, s, "PUT", "/api/rename", map[string]string{"path": "a.txt", "name": "b.txt"})
+	do(t, s, "PUT", "/api/move", map[string]string{"path": "a.txt", "newPath": "b.txt"})
 	time.Sleep(flushDelay + 300*time.Millisecond)
 	if b, _ := os.ReadFile(s.abs("b.txt")); string(b) != "xy" {
 		t.Fatalf("b.txt = %q", b)

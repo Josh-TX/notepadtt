@@ -4,7 +4,7 @@
       <div class="move-modal">
         <div class="move-header">
           <div class="move-title-block">
-            <div class="move-kicker">{{ isFolder ? 'MOVE FOLDER' : 'MOVE FILE' }}</div>
+            <div class="move-kicker">{{ verb.toUpperCase() }} {{ isFolder ? 'FOLDER' : 'FILE' }}</div>
             <div class="move-title" :title="originalPath">{{ originalPath }}</div>
           </div>
           <button class="close-btn" @click="close">✕</button>
@@ -47,7 +47,7 @@
         </div>
         <div class="move-footer">
           <button class="new-folder-btn" @click="newFolder">+ New Folder</button>
-          <button class="move-btn" :disabled="!canMove" @click="tryMove">Move</button>
+          <button class="move-btn" :disabled="!canMove" @click="tryMove">{{ verb }}</button>
         </div>
       </div>
     </div>
@@ -56,12 +56,14 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { store, closeMoveModal, getFolderNode, showToast } from '../store.js'
-import { move } from '../api.js'
+import { store, closeMoveModal, getFolderNode, activateNewTab, showToast } from '../store.js'
+import { move, duplicate } from '../api.js'
 
 const inputEl = ref(null)
 const inputPath = ref('')
 
+const isCopy = computed(() => store.moveModalItem?.mode === 'copy')
+const verb = computed(() => isCopy.value ? 'Copy' : 'Move')
 const isFolder = computed(() => store.moveModalItem?.type === 'folder')
 const originalPath = computed(() => store.moveModalItem?.path ?? '')
 
@@ -97,8 +99,24 @@ const canMove = computed(() => inputPath.value !== originalPath.value && !confli
 
 watch(() => store.moveModalOpen, (open) => {
   if (!open) return
-  inputPath.value = store.moveModalItem?.path ?? ''
+  const item = store.moveModalItem
+  inputPath.value = item?.mode === 'copy' ? suggestCopyPath(item.path) : item?.path ?? ''
 })
+
+// "dir/foo.txt" -> first free "dir/foo (2).txt"
+function suggestCopyPath(p) {
+  const slash = p.lastIndexOf('/')
+  const dir = slash === -1 ? '' : p.slice(0, slash)
+  const base = p.slice(slash + 1)
+  const dot = base.lastIndexOf('.')
+  const ext = dot > 0 ? base.slice(dot) : ''
+  const stem = (dot > 0 ? base.slice(0, dot) : base).replace(/ \(\d+\)$/, '')
+  const node = getFolderNode(dir)
+  for (let n = 2; ; n++) {
+    const name = `${stem} (${n})${ext}`
+    if (!node || !node.files.some(f => f.name === name)) return dir ? dir + '/' + name : name
+  }
+}
 
 function close() { closeMoveModal() }
 
@@ -124,7 +142,8 @@ function newFolder() {
 async function tryMove() {
   if (!canMove.value) return
   try {
-    await move(store.moveModalItem.path, inputPath.value)
+    if (isCopy.value) await activateNewTab(await duplicate(store.moveModalItem.path, inputPath.value))
+    else await move(store.moveModalItem.path, inputPath.value)
     close()
   } catch (err) {
     showToast(err.message, 'error')

@@ -92,7 +92,6 @@ func (s *Server) registerRoutes(frontend embed.FS) {
 	s.mux.HandleFunc("POST /api/files", s.handleCreateFile)
 	s.mux.HandleFunc("POST /api/folders", s.handleCreateFolder)
 	s.mux.HandleFunc("POST /api/duplicate", s.handleDuplicate)
-	s.mux.HandleFunc("PUT /api/rename", s.handleRename)
 	s.mux.HandleFunc("PUT /api/move", s.handleMove)
 	s.mux.HandleFunc("DELETE /api/entries", s.handleDelete)
 	s.mux.HandleFunc("POST /api/trash/{id}/restore", s.handleRestore)

@@ -5,6 +5,7 @@
         <li
           v-for="item in items"
           :key="item.label"
+          :class="{ divided: item.divider }"
           @click="run(item)"
         >{{ item.label }}</li>
       </ul>
@@ -61,6 +62,15 @@ function run(item) {
   padding: 6px 16px;
   cursor: pointer;
   color: #ccc;
+}
+.ctx-menu li.divided { position: relative; margin-top: 8px; }
+.ctx-menu li.divided::before {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: 16px;
+  right: 16px;
+  border-top: 1px solid #333;
 }
 .ctx-menu li:hover { background: #094771; color: #fff; }
 </style>

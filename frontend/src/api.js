@@ -27,8 +27,7 @@ export function downloadUrl(path) { return `/api/download?path=${encodeURICompon
 
 export function createFile(parentPath) { return req('POST', '/api/files', { parentPath }) }
 export function createFolder(parentPath, name) { return req('POST', '/api/folders', { parentPath, name }) }
-export function duplicate(path) { return req('POST', '/api/duplicate', { path }) }
-export function rename(path, name) { return req('PUT', '/api/rename', { path, name }) }
+export function duplicate(path, newPath) { return req('POST', '/api/duplicate', { path, newPath }) }
 export function move(path, newPath) { return req('PUT', '/api/move', { path, newPath }) }
 export function deleteEntry(path) { return req('DELETE', '/api/entries', { path }) }
 export function restoreTrash(trashId) { return req('POST', `/api/trash/${trashId}/restore`) }

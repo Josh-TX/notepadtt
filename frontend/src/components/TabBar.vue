@@ -46,7 +46,7 @@
 <script setup>
 import { computed, ref, watch, nextTick, onMounted } from 'vue'
 import { store, activateTab, activateNewTab, closeTabById, reorderTab, toggleSidebar, openMoveModal, deleteWithUndo, showToast } from '../store.js'
-import { createFile, rename, duplicate, downloadUrl } from '../api.js'
+import { createFile, downloadUrl } from '../api.js'
 import ContextMenu from './ContextMenu.vue'
 
 const scrollEl = ref(null)
@@ -79,30 +79,23 @@ function openMenu(e, tab) {
 const menuItems = computed(() => {
   const tab = menuTab.value
   return [
-    { label: 'Rename', action: () => doRename(tab) },
-    { label: 'Move', action: () => openMoveModal({ type: 'file', path: tab.path, name: tab.name }) },
+    { label: 'Close', action: () => closeTabById(tab.fileId) },
+    { label: 'Close Others', action: () => closeOthers(tab) },
+    { label: 'Close All', action: () => closeAll() },
+    { label: 'Move', divider: true, action: () => openMoveModal({ type: 'file', path: tab.path, name: tab.name }) },
+    { label: 'Copy', action: () => openMoveModal({ type: 'file', mode: 'copy', path: tab.path, name: tab.name }) },
     { label: 'Delete', action: () => deleteWithUndo(tab.path, tab.name) },
-    { label: 'Duplicate', action: () => doDuplicate(tab) },
     { label: 'Download', action: () => doDownload(tab) },
   ]
 })
 
-async function doRename(tab) {
-  const newName = window.prompt('Rename file:', tab.name)
-  if (!newName || newName === tab.name) return
-  try {
-    await rename(tab.path, newName)
-  } catch (e) {
-    showToast(e.message, 'error')
-  }
+async function closeOthers(tab) {
+  await activateTab(tab.fileId)
+  for (const t of [...store.tabs]) if (t.fileId !== tab.fileId) await closeTabById(t.fileId)
 }
 
-async function doDuplicate(tab) {
-  try {
-    await activateNewTab(await duplicate(tab.path))
-  } catch (e) {
-    showToast(e.message, 'error')
-  }
+async function closeAll() {
+  for (const t of [...store.tabs]) await closeTabById(t.fileId)
 }
 
 function doDownload(tab) {

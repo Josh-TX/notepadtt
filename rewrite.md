@@ -66,7 +66,7 @@ Drastic simplification: stateless server, filesystem is the only persistent stor
 
 ## Implementation decisions (made while building; not discussed)
 - Backend package rewritten fresh (no DB layer left to adapt); edit.go merge functions, walk.go, ws.go kept and adapted. Single `Server.mu` serializes registry/edits/disk writes; watcher takes it before re-reading disk, so own-write echoes compare equal and are ignored.
-- All file ops are path-based (tree nodes have no FileId): `PUT /api/rename`, `PUT /api/move`, `DELETE /api/entries`, `POST /api/duplicate`. FileId only for tabs/content/edits.
+- All file ops are path-based (tree nodes have no FileId): `PUT /api/move`, `DELETE /api/entries`, `POST /api/duplicate`. FileId only for tabs/content/edits.
 - Move (modal + drag-and-drop in the tree) kept; conflicts -> 409, move into itself -> 400.
 - Duplicate opens the copy as a tab.
 - Tree folder menu "New File" creates inside that folder; only the TabBar "+" is root-only.

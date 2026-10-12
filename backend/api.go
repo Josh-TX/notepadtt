@@ -275,10 +275,11 @@ func (s *Server) nextDuplicateName(folder, base string) string {
 
 func (s *Server) handleDuplicate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Path string `json:"path"`
+		Path    string `json:"path"`
+		NewPath string `json:"newPath"` // optional; default is the next free "name (n).ext"
 	}
 	decodeBody(r, &body)
-	if !validRel(body.Path) {
+	if !validRel(body.Path) || (body.NewPath != "" && !validRel(body.NewPath)) {
 		http.Error(w, "invalid path", 400)
 		return
 	}
@@ -296,8 +297,18 @@ func (s *Server) handleDuplicate(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rel := joinRel(parentOf(body.Path), s.nextDuplicateName(parentOf(body.Path), path.Base(body.Path)))
+	rel := body.NewPath
+	if rel == "" {
+		rel = joinRel(parentOf(body.Path), s.nextDuplicateName(parentOf(body.Path), path.Base(body.Path)))
+	} else if err := os.MkdirAll(s.abs(parentOf(rel)), 0755); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 	dst, err := os.OpenFile(s.abs(rel), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	if os.IsExist(err) {
+		http.Error(w, "already exists", 409)
+		return
+	}
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -321,20 +332,9 @@ func joinRel(folder, name string) string {
 	return folder + "/" + name
 }
 
-// ---- rename / move ----
+// ---- move (also renames) ----
 
-func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Path string `json:"path"`
-		Name string `json:"name"`
-	}
-	decodeBody(r, &body)
-	if !validRel(body.Path) || !validName(body.Name) {
-		http.Error(w, "invalid name", 400)
-		return
-	}
-	s.renamePath(w, body.Path, joinRel(parentOf(body.Path), body.Name))
-}
+// handleMove moves a file or folder on disk and re-points any open tabs at it.
 
 func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -350,15 +350,7 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cannot move into itself", 400)
 		return
 	}
-	s.renamePath(w, body.Path, body.NewPath)
-}
-
-// renamePath moves a file or folder on disk and re-points any open tabs at it.
-func (s *Server) renamePath(w http.ResponseWriter, oldRel, newRel string) {
-	if oldRel == newRel {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
+	oldRel, newRel := body.Path, body.NewPath
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, err := os.Lstat(s.abs(oldRel)); err != nil {

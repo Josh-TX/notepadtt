@@ -67,7 +67,7 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { store, closeSidebar, saveSidebarWidth, openPath, activateNewTab, openMoveModal, deleteWithUndo, showToast, openSearchModal, getFolderNode, folderOfPath } from '../store.js'
-import { createFile, createFolder, rename, duplicate, move, downloadUrl } from '../api.js'
+import { createFile, createFolder, move, downloadUrl } from '../api.js'
 import FileTree from './FileTree.vue'
 import ContextMenu from './ContextMenu.vue'
 
@@ -346,7 +346,6 @@ const folderMenuItems = computed(() => {
     { label: 'New Folder', action: () => doNewFolder(folder) },
   ]
   if (folder?.path !== '') {
-    items.push({ label: 'Rename Folder', action: () => doRenameFolder(folder) })
     items.push({ label: 'Move Folder', action: () => openMoveModal({ type: 'folder', path: folder.path, name: folder.name }) })
     items.push({ label: 'Delete Folder', action: () => doDeleteFolder(folder) })
   }
@@ -356,33 +355,12 @@ const folderMenuItems = computed(() => {
 const fileMenuItems = computed(() => {
   const file = menuFile.value
   return [
-    { label: 'Rename', action: () => doRenameFile(file) },
     { label: 'Move', action: () => openMoveModal({ type: 'file', path: file.path, name: file.name }) },
+    { label: 'Copy', action: () => openMoveModal({ type: 'file', mode: 'copy', path: file.path, name: file.name }) },
     { label: 'Delete', action: () => deleteWithUndo(file.path, file.name) },
-    { label: 'Duplicate', action: () => doDuplicateFile(file) },
     { label: 'Download', action: () => doDownloadFile(file) },
   ]
 })
-
-async function doRename(item, label) {
-  const newName = window.prompt(label, item.name)
-  if (!newName || newName === item.name) return
-  try {
-    await rename(item.path, newName)
-  } catch (e) {
-    showToast(e.message, 'error')
-  }
-}
-const doRenameFile = (file) => doRename(file, 'Rename file:')
-const doRenameFolder = (folder) => doRename(folder, 'Rename folder:')
-
-async function doDuplicateFile(file) {
-  try {
-    await activateNewTab(await duplicate(file.path))
-  } catch (e) {
-    showToast(e.message, 'error')
-  }
-}
 
 function doDownloadFile(file) {
   const a = document.createElement('a')
