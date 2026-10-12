@@ -24,9 +24,9 @@
 
 **Search** — Search Modal (Ctrl+Shift+F or the magnifier in the TabBar). The server shells out to `rg` (or `grep`) over the data root plus a filename match; filename matches rank first; top 10 results with 4-line snippets. Plain Ctrl+F is the browser's native find (works because the Editor uses `viewportMargin: Infinity`).
 
-**TabBar** — the only top bar: sidebar toggle, tabs, "+" new-file button, search button. Tab shows the filename; hover title is the absolute path; the close button is always visible and closing never deletes the file. Right-click: Rename, Move, Delete, Duplicate, Download. Closing the active tab activates its right neighbor, else left.
+**TabBar** — the only top bar: sidebar toggle, tabs, "+" new-file button. Tab shows the filename; hover title is the absolute path; the close button is always visible and closing never deletes the file. Right-click: Rename, Move, Delete, Duplicate, Download. Closing the active tab activates its right neighbor, else left.
 
-**Sidebar** — FileTree only (no search/trash/settings rows). Overlays on mobile, pushes layout on desktop, resizable. Right-click folders (New File, New Folder, Rename, Move, Delete) and files (Rename, Move, Delete, Duplicate, Download); right-click on blank space acts on root. Drag to move.
+**Sidebar** — Search button above the FileTree (no trash/settings rows). Overlays on mobile, pushes layout on desktop, resizable. Right-click folders (New File, New Folder, Rename, Move, Delete) and files (Rename, Move, Delete, Duplicate, Download); right-click on blank space acts on root. Drag to move.
 
 **FileTree** — all folders (alphabetical, case-insensitive) then all files (same), no manual ordering. Kept current by the watcher.
 

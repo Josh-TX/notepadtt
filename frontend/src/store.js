@@ -24,7 +24,7 @@ const state = reactive({
   fileContents: {},         // fileId -> string
   fileVersions: {},         // fileId -> versionId
   fileStatus: {},           // fileId -> { kind: 'ok'|'tooLarge'|'binary', size }
-  wordWrap: lsGet(LS_WRAP, true),
+  wordWrap: lsGet(LS_WRAP, false),
   sidebarOpen: false,
   sidebarWidth: lsGet(LS_SIDEBAR_WIDTH, 400),
   sidebarDragging: false,

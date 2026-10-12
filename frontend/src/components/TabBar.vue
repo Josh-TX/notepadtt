@@ -32,13 +32,6 @@
       <div v-if="isDragging && dropIndex !== null" class="drop-indicator" :style="indicatorStyle" />
     </div>
     <button class="bar-btn new-btn" title="New file" @click="newFile">+</button>
-    <div class="bar-spacer" />
-    <button class="bar-btn" title="Search files (Ctrl+Shift+F)" @click="openSearchModal">
-      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="6.5" cy="6.5" r="4"/>
-        <line x1="10" y1="10" x2="14" y2="14"/>
-      </svg>
-    </button>
 
     <ContextMenu
       v-if="menuTab"
@@ -52,7 +45,7 @@
 
 <script setup>
 import { computed, ref, watch, nextTick, onMounted } from 'vue'
-import { store, activateTab, activateNewTab, closeTabById, reorderTab, toggleSidebar, openSearchModal, openMoveModal, deleteWithUndo, showToast } from '../store.js'
+import { store, activateTab, activateNewTab, closeTabById, reorderTab, toggleSidebar, openMoveModal, deleteWithUndo, showToast } from '../store.js'
 import { createFile, rename, duplicate, downloadUrl } from '../api.js'
 import ContextMenu from './ContextMenu.vue'
 

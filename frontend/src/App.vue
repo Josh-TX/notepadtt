@@ -49,7 +49,7 @@ function onToastAction() {
 }
 
 // Ctrl+F stays the browser's native find (the editor renders every line). The
-// workspace Search Modal opens with Ctrl+Shift+F or the magnifier in the TabBar.
+// workspace Search Modal opens with Ctrl+Shift+F or the Sidebar search button.
 function onKeydown(e) {
   if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || e.key.toLowerCase() !== 'f') return
   e.preventDefault()

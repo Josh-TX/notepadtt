@@ -9,6 +9,13 @@
       </button>
       <span class="sidebar-title">notepadtt</span>
     </div>
+    <button class="search-btn" title="Search files (Ctrl+Shift+F)" @click="openSearchModal">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="6.5" cy="6.5" r="4"/>
+        <line x1="10" y1="10" x2="14" y2="14"/>
+      </svg>
+      <span>Search</span>
+    </button>
     <div
       class="sidebar-scroll"
       ref="treeScrollEl"
@@ -59,7 +66,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
-import { store, closeSidebar, saveSidebarWidth, openPath, activateNewTab, openMoveModal, deleteWithUndo, showToast, getFolderNode, folderOfPath } from '../store.js'
+import { store, closeSidebar, saveSidebarWidth, openPath, activateNewTab, openMoveModal, deleteWithUndo, showToast, openSearchModal, getFolderNode, folderOfPath } from '../store.js'
 import { createFile, createFolder, rename, duplicate, move, downloadUrl } from '../api.js'
 import FileTree from './FileTree.vue'
 import ContextMenu from './ContextMenu.vue'
@@ -452,6 +459,20 @@ async function doDeleteFolder(folder) {
   color: #bbb;
   letter-spacing: 0.08em;
 }
+.search-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid #2d2d2d;
+  color: #aaa;
+  cursor: pointer;
+  text-align: left;
+}
+.search-btn:hover { color: #fff; background: #2a2d2e; }
 .sidebar-scroll {
   flex: 1;
   overflow-y: auto;

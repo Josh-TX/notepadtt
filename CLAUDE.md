@@ -9,8 +9,8 @@ See GLOSSARY.md for details. The app is a stateless server over a directory on d
 **Data root**: Directory served; `.git`, `node_modules`, `.ntt-trash` are invisible everywhere
 **Trash**: `.ntt-trash` in the data root; deleted entries live there 5s for UNDO; wiped at startup
 **Search**: Search Modal (Ctrl+Shift+F); server shells out to rg/grep; top 10 results. Ctrl+F is the browser's native find
-**TabBar**: The only top bar: sidebar toggle, tabs (hover = absolute path, close always visible), "+" new file, search button
-**Sidebar**: Side panel with just the FileTree; overlays on mobile
+**TabBar**: The only top bar: sidebar toggle, tabs (hover = absolute path, close always visible), "+" new file
+**Sidebar**: Side panel with search button + FileTree; overlays on mobile
 **FileTree**: Folders then files, case-insensitive alphabetical; watcher keeps it live
 **Editor**: Full-viewport CodeMirror 5 text editor between TabBar and Footer; word wrap + line numbers only
 **Footer**: Bottom bar with undo/redo/word-wrap toggles on left and file stats on right
