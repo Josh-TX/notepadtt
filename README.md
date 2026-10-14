@@ -5,12 +5,21 @@ A simple notepad app inspired by notepad++. Notes are auto-saved and synchronize
 ## Usage
 
 ```
-notepadtt [-d|-directory <path>] [-p|-port <port>]
+notepadtt [-d|--directory <path>] [-p|--port <port>]
 ```
 
-- `-d`, `-directory`: root directory to serve (default `.`)
-- `-p`, `-port`: port to listen on (default `8080`)
+| Flag | Env var | Default | Description |
+|---|---|---|---|
+| `-d`, `--directory` | `NOTEPADTT_DIRECTORY` | `.` | root directory to serve |
+| `-p`, `--port` | `NOTEPADTT_PORT` | `8080` | port to listen on |
 
+## Building
+
+```
+make build      # builds the frontend, then the Go binary (./notepadtt) with the frontend embedded
+```
+
+The frontend is only embedded when built with `-tags embed_frontend` (`make backend` does this). A plain `go build` in `backend/` works without Node, but serves no UI. For development, run `go run .` in `backend/` and `npm run dev` in `frontend/`.
 
 ## Notes
 
