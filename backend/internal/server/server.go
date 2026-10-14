@@ -1,7 +1,6 @@
-package backend
+package server
 
 import (
-	"embed"
 	"io/fs"
 	"net/http"
 	"os"
@@ -38,7 +37,7 @@ type Server struct {
 	treeFirst time.Time
 }
 
-func NewServer(root string, frontend embed.FS) (*Server, error) {
+func NewServer(root string, frontend fs.FS) (*Server, error) {
 	rootAbs, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -78,7 +77,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
 }
 
-func (s *Server) registerRoutes(frontend embed.FS) {
+func (s *Server) registerRoutes(frontend fs.FS) {
 	s.mux.HandleFunc("GET /ws", s.hub.ServeWS)
 
 	s.mux.HandleFunc("GET /api/tree", s.handleGetTree)
@@ -100,7 +99,7 @@ func (s *Server) registerRoutes(frontend embed.FS) {
 
 	s.mux.HandleFunc("GET /api/search", s.handleSearch)
 
-	sub, _ := fs.Sub(frontend, "frontend/dist")
+	sub, _ := fs.Sub(frontend, ".")
 	fileServer := http.FileServer(http.FS(sub))
 	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/")

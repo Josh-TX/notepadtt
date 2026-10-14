@@ -11,15 +11,17 @@ RUN npm run build
 FROM golang:1.26 AS go-build
 
 WORKDIR /app
-COPY go.mod go.sum ./
-RUN go mod download
+COPY backend/go.mod backend/go.sum ./backend/
+RUN cd backend && go mod download
 COPY . .
-COPY --from=frontend-build /app/frontend/dist ./frontend/dist
+COPY --from=frontend-build /app/backend/internal/webui/dist ./backend/internal/webui/dist
 
 ARG TARGETOS
 ARG TARGETARCH
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
-    -trimpath -ldflags="-s -w" -o /notepadtt .
+ARG VERSION=dev
+WORKDIR /app/backend
+RUN test -f internal/webui/dist/index.html && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -tags embed_frontend \
+    -trimpath -ldflags="-s -w -X main.version=$VERSION" -o /notepadtt .
 RUN mkdir /data
 
 # Stage 3 - minimal runtime image (ripgrep is shelled out to for workspace search)

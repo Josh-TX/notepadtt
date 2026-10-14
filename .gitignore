@@ -1,6 +1,5 @@
-notepadtt
 frontend/node_modules/
-frontend/dist/
-!frontend/dist/.gitkeep
+backend/internal/webui/dist/
+/notepadtt
 *.db
 __debug*

@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"embed"
-	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -12,25 +10,27 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Josh-TX/notepadtt/backend"
+	"github.com/Josh-TX/notepadtt/internal/config"
+	"github.com/Josh-TX/notepadtt/internal/server"
+	"github.com/Josh-TX/notepadtt/internal/webui"
 )
 
-//go:embed frontend/dist
-var frontendDist embed.FS
+var version = "dev" // set via -ldflags "-X main.version=..."
 
 func main() {
-	var dir string
-	var port int
-	flag.StringVar(&dir, "directory", ".", "root directory to serve")
-	flag.StringVar(&dir, "d", ".", "root directory to serve")
-	flag.IntVar(&port, "port", 8080, "port to listen on")
-	flag.IntVar(&port, "p", 8080, "port to listen on")
-	flag.Parse()
+	cfg, err := config.Load(os.Args[1:], version)
+	if err != nil {
+		log.Fatal(err)
+	}
+	dir, port := cfg.Directory, cfg.Port
+	if !webui.Embedded() {
+		log.Printf("no frontend embedded, use the Vite dev server (or build with -tags embed_frontend)")
+	}
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		log.Fatalf("directory %q does not exist or is not a directory", dir)
 	}
 
-	srv, err := backend.NewServer(dir, frontendDist)
+	srv, err := server.NewServer(dir, webui.FS())
 	if err != nil {
 		log.Fatal(err)
 	}

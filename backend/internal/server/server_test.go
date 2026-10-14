@@ -1,7 +1,6 @@
-package backend
+package server
 
 import (
-	"embed"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,12 +8,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 )
 
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
-	s, err := NewServer(t.TempDir(), embed.FS{})
+	s, err := NewServer(t.TempDir(), fstest.MapFS{})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -335,7 +335,7 @@ func TestStartupWipesTrashDir(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, trashDirName, "leftover"), 0755)
 	os.WriteFile(filepath.Join(dir, trashDirName, "leftover", "x"), []byte("x"), 0644)
-	if _, err := NewServer(dir, embed.FS{}); err != nil {
+	if _, err := NewServer(dir, fstest.MapFS{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, trashDirName)); !os.IsNotExist(err) {

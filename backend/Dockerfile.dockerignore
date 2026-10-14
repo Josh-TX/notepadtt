@@ -1,6 +1,6 @@
 notepadtt
 frontend/node_modules
-frontend/dist
+backend/internal/webui/dist
 dist
 *.db
 __debug*

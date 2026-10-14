@@ -1,4 +1,4 @@
-package backend
+package server
 
 import "math/rand/v2"
 

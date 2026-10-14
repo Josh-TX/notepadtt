@@ -6,7 +6,7 @@ frontend:
 	cd frontend && npm run build
 
 backend:
-	go build -o notepadtt .
+	cd backend && go build -tags embed_frontend -ldflags="-X main.version=dev" -o ../notepadtt .
 
 clean:
-	rm -rf frontend/dist notepadtt
+	rm -rf backend/internal/webui/dist notepadtt
