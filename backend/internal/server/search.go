@@ -98,6 +98,7 @@ func (s *Server) contentSearch(ctx context.Context, terms []string, useRegex boo
 		for name := range excludedNames {
 			args = append(args, "--glob", "!"+name)
 		}
+		args = append(args, "--glob", "!*"+tmpSuffix)
 		if !useRegex {
 			args = append(args, "--fixed-strings")
 		}
@@ -111,6 +112,7 @@ func (s *Server) contentSearch(ctx context.Context, terms []string, useRegex boo
 		for name := range excludedNames {
 			args = append(args, "--exclude-dir="+name)
 		}
+		args = append(args, "--exclude=*"+tmpSuffix)
 		if useRegex {
 			args = append(args, "-E")
 		} else {

@@ -44,6 +44,7 @@ func NewServer(root string, frontend fs.FS) (*Server, error) {
 	}
 	// Crash recovery: anything left in the trash from a previous run is gone for good.
 	os.RemoveAll(filepath.Join(rootAbs, trashDirName))
+	removeStaleTmpFiles(rootAbs)
 
 	s := &Server{
 		root:    root,
@@ -64,6 +65,7 @@ func NewServer(root string, frontend fs.FS) (*Server, error) {
 	if err := s.startWatcher(); err != nil {
 		return nil, err
 	}
+	go s.reconcileLoop()
 	return s, nil
 }
 

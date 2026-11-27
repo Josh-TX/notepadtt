@@ -18,6 +18,11 @@ type openFile struct {
 	content   string
 	versionId string
 
+	// last known on-disk state (what we last read or wrote): base is the content,
+	// sig its stat signature. Guarded by writeMu / s.mu (see persist.go).
+	base string
+	sig  diskSig
+
 	// write-behind state: dirty/dirtySince/flushTimer are guarded by Server.mu;
 	// writeMu serializes disk writes; flushing > 0 while a write is in flight.
 	dirty      bool
@@ -117,11 +122,13 @@ func (s *Server) closeTabLocked(id string) int {
 
 // loadLocked reads f's content from disk and mints a fresh versionId.
 func (s *Server) loadLocked(f *openFile) error {
+	sig, _ := statSig(s.abs(f.path)) // before the read: a racing change then mismatches later
 	b, err := os.ReadFile(s.abs(f.path))
 	if err != nil {
 		return err
 	}
 	f.content = string(b)
+	f.base, f.sig = f.content, sig
 	f.versionId = uniqueId(5)
 	f.loaded = true
 	s.hub.Versions.Add(f.id, f.versionId, f.content)

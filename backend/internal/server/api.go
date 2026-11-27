@@ -174,6 +174,8 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), 500)
 			return
 		}
+	} else {
+		s.reconcileLocked(f) // don't trust memory if a watcher event was missed
 	}
 	setSub(id)
 	resp.Content = f.content

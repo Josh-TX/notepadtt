@@ -256,11 +256,13 @@ func (s *Server) syncFromDiskLocked(f *openFile) {
 	if !f.loaded || f.dirty || f.flushing.Load() > 0 {
 		return
 	}
+	sig, _ := statSig(s.abs(f.path))
 	b, err := os.ReadFile(s.abs(f.path))
 	if err != nil {
 		return
 	}
 	content := string(b)
+	f.base, f.sig = content, sig
 	if content == f.content {
 		return // our own write echoing back, or a no-op touch
 	}

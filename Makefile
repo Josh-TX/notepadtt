@@ -1,3 +1,4 @@
+.NOTPARALLEL:
 .PHONY: build frontend backend clean
 
 build: frontend backend

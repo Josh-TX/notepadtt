@@ -4,12 +4,18 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // excludedNames are treated as nonexistent everywhere: tree, watcher, and search.
 var excludedNames = map[string]bool{".git": true, "node_modules": true, trashDirName: true}
 
-func isExcludedName(name string) bool { return excludedNames[name] }
+// tmpSuffix marks in-flight atomic-write temp files; they are invisible everywhere.
+const tmpSuffix = ".ntt-tmp"
+
+func isExcludedName(name string) bool {
+	return excludedNames[name] || strings.HasSuffix(name, tmpSuffix)
+}
 
 // walkFollowSymlinks recursively visits root and its descendants like
 // filepath.WalkDir, but also descends into directory symlinks (filepath.WalkDir
